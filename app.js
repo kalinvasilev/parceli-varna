@@ -75,6 +75,7 @@
   }
   const ICON = {
     layers: '<svg viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg>',
+    reset: '<svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/></svg>',
     locate: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>',
     rect: '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="1.5" stroke-dasharray="3 2.5"/></svg>',
     mark: '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>',
@@ -137,7 +138,8 @@
   };
 
   // ---------- Map ----------
-  const map = L.map('map', { preferCanvas: true, zoomControl: !isPhone(), tap: false }).setView([43.215, 27.91], 13);
+  const HOME = { center: [43.215, 27.91], zoom: 13 };
+  const map = L.map('map', { preferCanvas: true, zoomControl: !isPhone(), tap: false }).setView(HOME.center, HOME.zoom);
   // "Изчистена": OpenStreetMap muted with a CSS filter (grey in light mode, inverted in dark) so the data stands out.
   const clean = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 20, maxNativeZoom: 19, attribution: '© OpenStreetMap', className: 'tiles-clean',
@@ -200,11 +202,27 @@
     style: (f) => polyStyle(f.properties.id),
     onEachFeature: (f, layer) => {
       plotLayers.set(f.properties.id, layer);
+      layer._cell = loadingCell;
       if (loadingCell) cellLayers.get(loadingCell).push(layer);
       layer.on('click', (e) => onPlotClick(f.properties.id, e.originalEvent));
-      if (canHover) layer.bindTooltip(() => `${f.properties.id} · ${esc(f.properties.owner)}`, { sticky: true });
+      if (canHover) layer.bindTooltip(() => `${f.properties.id} · ${esc(state.byId.get(f.properties.id)?.owner || '')}`, { sticky: true });
     },
   });
+  // A plot's details (address, zone limits, restrictions…) are kept apart from the outlines and
+  // downloaded per cell only when a plot in it is opened.
+  const facts = new Map();   // cell -> {id: properties}, or a pending Promise
+  function factsOf(id) {
+    const cell = plotLayers.get(id)?._cell;
+    if (!cell) return null;
+    const f = facts.get(cell);
+    if (f && !(f instanceof Promise)) return f[id] || {};
+    if (!f) {
+      facts.set(cell, load(`facts/${cell}.json`)
+        .then((d) => { facts.set(cell, d); if (state.current) renderDetail(); })
+        .catch(() => facts.delete(cell)));
+    }
+    return null;
+  }
   const plotLayers = new Map();
   const grid = { cell: 0.01, cells: {}, loaded: new Set() };
   const DotLayer = L.Layer.extend({
@@ -320,6 +338,7 @@
       <button type="button" id="tool-rect" title="Избери с правоъгълник" aria-label="Избери с правоъгълник">${ICON.rect}</button>
       <button type="button" id="tool-mark" title="Маркиране с докосване" aria-label="Маркиране с докосване">${ICON.mark}</button>
       <button type="button" id="tool-fit" title="Покажи всички резултати" aria-label="Покажи всички резултати">${ICON.fit}</button>
+      <button type="button" id="tool-reset" title="Начало: изчисти търсенето и избора" aria-label="Начало: изчисти търсенето и избора">${ICON.reset}</button>
       <button type="button" id="tool-theme"></button>`;
     L.DomEvent.disableClickPropagation(d);
     return d;
@@ -378,8 +397,23 @@
     el.querySelector('.lg-toggle').onclick = () => { el.classList.toggle('closed'); renderLegend(); };
   }
 
+  // Outlines are drawn only when the view needs few enough cells: on a large screen at zoom 15
+  // that would be tens of thousands of outlines, which makes the map slow.
+  const MAX_POLY_CELLS = 24;
+  function visibleCellCount() {
+    const b = map.getBounds(), c = grid.cell;
+    let n = 0;
+    for (let i = Math.floor(b.getWest() / c); i <= Math.floor(b.getEast() / c); i++)
+      for (let j = Math.floor(b.getSouth() / c); j <= Math.floor(b.getNorth() / c); j++) if (grid.cells[`${i}_${j}`]) n++;
+    return n;
+  }
+  const zoomHint = L.DomUtil.create('div', 'zoom-hint', map.getContainer());
+  zoomHint.hidden = true;
+  zoomHint.textContent = 'Приближете, за да видите границите на парцелите';
   function syncZoomLayers() {
-    if (map.getZoom() >= POLY_ZOOM) {
+    const crowded = map.getZoom() >= POLY_ZOOM && visibleCellCount() > MAX_POLY_CELLS;
+    zoomHint.hidden = !crowded;
+    if (map.getZoom() >= POLY_ZOOM && !crowded) {
       if (map.hasLayer(dots)) map.removeLayer(dots);
       if (!map.hasLayer(plots)) plots.addTo(map);
       loadVisibleCells();
@@ -964,8 +998,7 @@
     const id = state.current;
     const r = state.byId.get(id);
     if (!r) return;
-    const l = plotLayers.get(id);
-    const p = l ? l.feature.properties : null;
+    const p = factsOf(id);
     const o = OWNER[r.cat] || OWNER.unknown;
     const s = STATUS[r.status];
     const fav = state.favs.get(id);
@@ -1527,6 +1560,18 @@
     });
     map.on('locationerror', () => toast('Местоположението не е достъпно'));
     $('#tool-fit').onclick = () => fitRows(state.matched.slice(0, MAX_DOTS));
+    // Back to the start: no search, nothing selected, the whole city. The filters stay as they are.
+    $('#tool-reset').onclick = () => {
+      if (rect.active) stopRect();
+      if (state.markMode) $('#tool-mark').click();
+      setHint('');
+      if (state.current) closeDetail();
+      if (state.sel.size) { const ids = [...state.sel]; state.sel.clear(); restyle(ids); renderSelection(); }
+      if (state.entity || state.text) clearSearch();
+      if (state.tab === 'detail') setTab('list');
+      map.flyTo(HOME.center, HOME.zoom, { duration: 0.6 });
+      toast('Начален изглед · филтрите са запазени');
+    };
     $('#tool-mark').onclick = () => {
       state.markMode = !state.markMode;
       $('#tool-mark').classList.toggle('on', state.markMode);

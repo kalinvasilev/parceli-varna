@@ -342,6 +342,11 @@ body.selecting .results .pick { display: block; align-self: start; margin-top: 2
 }
 .mode-banner .mb-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mode-banner .mb-done { border: 0; background: var(--accent-ink); color: var(--accent); font-weight: 700; border-radius: 999px; padding: 5px 12px; cursor: pointer; flex: none; }
+.zoom-hint {
+  position: absolute; z-index: 999; bottom: calc(var(--sheet-h, 0px) + 34px); left: 50%; transform: translateX(-50%);
+  max-width: calc(100% - 32px); padding: 7px 14px; border-radius: 999px; pointer-events: none;
+  background: var(--panel); color: var(--muted); box-shadow: var(--shadow); font-size: 12.5px; white-space: nowrap;
+}
 .leaflet-bottom { bottom: var(--sheet-h); transition: bottom .2s; }
 .drawing, .drawing * { cursor: crosshair !important; }
 
