@@ -448,3 +448,55 @@ body.loading .map-loading { display: block; }
 .auction-card .ac-meta { font-size: 12.5px; color: var(--muted); }
 .auction-card .ac-go { margin-top: 4px; color: var(--accent); font-weight: 600; font-size: 13px; }
 .tabs button { font-size: 13px; }
+
+/* ---------- Парцели: filter line on top of the list ---------- */
+.filter-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
+  padding: 9px 10px 9px 12px; margin-bottom: 8px; border: 0; border-radius: 10px; background: var(--soft);
+  cursor: pointer; text-align: left;
+}
+.filter-bar:hover { background: color-mix(in srgb, var(--accent) 10%, var(--soft)); }
+.filter-bar .fb-text { font-weight: 600; font-size: 13.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filter-bar .fb-btn { flex: none; color: var(--accent); font-weight: 600; font-size: 13px; }
+.filter-bar .fb-btn::after { content: " ›"; }
+
+/* Filters sub-page */
+.subpage-top { display: flex; align-items: center; gap: 12px; padding: 12px 0 2px; }
+.subpage-top span { font-weight: 600; }
+.apply-bar { position: sticky; bottom: 0; padding: 12px 0 calc(12px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--panel) 30%); margin-top: 6px; }
+.btn-primary {
+  width: 100%; padding: 11px 14px; border: 0; border-radius: 12px; background: var(--accent); color: var(--accent-ink);
+  font-weight: 600; font-size: 14px; cursor: pointer;
+}
+.btn-primary:hover { filter: brightness(1.05); }
+
+/* ---------- Ново: event rows ---------- */
+.results li.event { grid-template-columns: 1fr auto; }
+.results li.event .line1 + .line1 { margin-top: 2px; }
+.ev-kind { display: inline-flex; align-items: center; gap: 6px; font: 600 10.5px var(--f-body); letter-spacing: .06em; text-transform: uppercase; color: var(--c); }
+.ev-kind::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+.ev-date { font: 500 11.5px var(--f-data); color: var(--faint); }
+.results li.event .owner { font-size: 12.5px; }
+.results li.event .go { color: var(--faint); font-size: 18px; padding-left: 6px; }
+#feed-types { margin-bottom: 2px; }
+#view-feed .field { margin: 8px 0 6px; }
+
+/* ---------- Plot details: signals, folded facts ---------- */
+.signals { margin: 14px 0 0; display: grid; gap: 6px; }
+.signals h3 { margin: 0 0 2px; }
+.signals .auction-card { margin: 0; }
+.signal {
+  display: grid; gap: 2px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line);
+  background: var(--soft); color: var(--ink); text-decoration: none;
+}
+a.signal:hover { border-color: var(--accent); }
+.sg-kind { display: inline-flex; align-items: center; gap: 6px; font: 600 10.5px var(--f-body); letter-spacing: .06em; text-transform: uppercase; color: var(--c); }
+.sg-kind::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+.sg-text { font-size: 13px; font-weight: 500; }
+.sg-sub { font-size: 12px; color: var(--muted); }
+.sg-go { margin-top: 3px; color: var(--accent); font-weight: 600; font-size: 12.5px; }
+.more-facts { margin-top: 12px; border-top: 1px dashed var(--line); padding-top: 10px; }
+.more-facts summary { cursor: pointer; color: var(--accent); font-weight: 600; font-size: 13px; }
+.more-facts .facts { border-top: 0; padding-top: 0; margin-top: 10px; }
+.chip-s { max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.results .chips { min-width: 0; }

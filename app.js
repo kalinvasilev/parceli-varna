@@ -129,8 +129,8 @@
     favs: new Map(Object.entries(store.get(KEY.favs, {}))),
     markMode: false,
     tab: 'filters',
-    auctions: [], auctionsByPlot: new Map(), auctionMode: false, auctionsUpdated: '',
-    auctionTypes: new Set(['plots', 'land']),
+    events: [], signalsByPlot: new Map(), feedMode: false, feedUpdated: '',
+    feedTypes: new Set(['auction', 'pup_request', 'pup_approved']),
   };
 
   // ---------- Map ----------
@@ -488,7 +488,8 @@
       openFromHash();
       syncZoomLayers();
       renderFavs();
-      load('auctions.json').then(initAuctions).catch(() => { $('#auctions-summary').textContent = 'Търговете не можаха да се заредят.'; });
+      Promise.allSettled([load('auctions.json'), load('pup.json')]).then(([a, p]) => initFeed(
+        a.status === 'fulfilled' ? a.value : null, p.status === 'fulfilled' ? p.value : null));
       load('oup.geojson').then((d) => zones.addData(d));
       for (const k of Object.keys(restrictionParts)) load(`${k}.geojson`).then((d) => restrictionParts[k].addData(d));
     })
@@ -510,7 +511,7 @@
     }
     const one = h.get('id');
     if (one && state.byId.has(one)) openDetail(one, true);
-    else setTab(isPhone() ? 'list' : 'filters');
+    else setTab('list');
   }
 
   // ---------- Controls ----------
@@ -559,6 +560,23 @@
         && !$('#district').value && !$('#zone-group').value;
       b.setAttribute('aria-pressed', on);
     });
+  }
+  const PRESET_NAMES = { free: 'Свободни терени', municipal: 'Общински терени', firms: 'Терени на фирми', all: 'Всички парцели' };
+  function renderFilterSummary() {
+    const preset = document.querySelector('[data-preset][aria-pressed="true"]');
+    const parts = [];
+    if (preset) parts.push(PRESET_NAMES[preset.dataset.preset]);
+    else {
+      parts.push(state.owners.size === Object.keys(OWNER).length ? 'Всички собственици' : `${state.owners.size} вида собственици`);
+      parts.push(state.statuses.size === Object.keys(STATUS).length ? 'всяко състояние' : `${state.statuses.size} състояния`);
+    }
+    const minArea = +$('#min-area').value;
+    if (minArea && !preset) parts.push(`≥ ${num(minArea)} м²`);
+    if (minArea && preset && minArea !== +PRESETS[preset.dataset.preset].minArea) parts.push(`≥ ${num(minArea)} м²`);
+    if ($('#district').value) parts.push($('#district').value);
+    if ($('#zone-group').value) parts.push('зона ' + $('#zone-group').value);
+    $('#filter-summary').textContent = parts.join(' · ');
+    $('#filters-apply').textContent = state.matched.length ? `Покажи ${nf.format(state.matched.length)} парцела` : 'Няма парцели по тези филтри';
   }
   function initSegments() {
     document.querySelectorAll('.seg[data-for]').forEach((seg) => {
@@ -612,6 +630,9 @@
     });
 
     document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
+    $('#open-filters').addEventListener('click', () => setTab('filters'));
+    $('#filters-back').addEventListener('click', () => setTab('list'));
+    $('#filters-apply').addEventListener('click', () => setTab('list'));
     $('#fit-results').addEventListener('click', () => { fitRows(state.matched.slice(0, MAX_DOTS)); });
     $('#select-all').addEventListener('click', () => {
       const take = state.matched.slice(0, MAX_SELECT_ALL);
@@ -655,14 +676,15 @@
     const wasFavs = state.tab === 'favs';
     state.tab = tab;
     if (tab !== 'detail') {
-      const want = tab === 'auctions';
-      if (want !== state.auctionMode) {
-        state.auctionMode = want;
+      const want = tab === 'feed';
+      if (want !== state.feedMode) {
+        state.feedMode = want;
         if (state.rows.length) apply();
       }
     }
     if (state.rows.length && (wasFavs || tab === 'favs')) renderDots();
-    document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', b.dataset.tab === tab));
+    const shown = tab === 'filters' ? 'list' : tab;
+    document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', b.dataset.tab === shown));
     document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + tab));
     $('.views').scrollTop = 0;
   }
@@ -681,8 +703,8 @@
     const zg = $('#zone-group').value;
     const sort = $('#sort').value;
     let list;
-    if (state.auctionMode) {
-      const ids = new Set(visibleAuctions().flatMap((a) => a.plot_ids));
+    if (state.feedMode) {
+      const ids = new Set(visibleFeed().flatMap((e) => e.plot_ids));
       list = [...ids].map((id) => state.byId.get(id)).filter(Boolean);
     } else if (state.entity) {
       list = state.entity.ids.map((id) => state.byId.get(id)).filter(Boolean);
@@ -710,6 +732,7 @@
     renderSummary();
     renderList();
     markPreset();
+    renderFilterSummary();
     document.body.classList.remove('loading');
     if (document.querySelector('.legend')) renderLegend();
   }
@@ -742,7 +765,7 @@
   function renderSummary() {
     const list = state.matched;
     const total = list.reduce((s, r) => s + (r.area || 0), 0);
-    if (!state.auctionMode) $('#n-list').textContent = list.length ? nf.format(list.length) : '';
+    if (!state.feedMode) $('#n-list').textContent = list.length ? nf.format(list.length) : '';
     $('#summary').innerHTML = list.length
       ? `<b>${nf.format(list.length)}</b> парцела · <b>${ha(total)}</b> ха${state.entity || state.text ? ' · филтрите не важат при търсене' : ''}`
         + (list.length > MAX_DOTS ? `<br>На картата: най-големите ${nf.format(MAX_DOTS)}.` : '')
@@ -925,10 +948,13 @@
         ['Застроеност', `${p.built ?? 0}% (${p.n_buildings || 0} сгр.${p.max_floors ? `, до ${p.max_floors} ет.` : ''})`],
       ].filter(Boolean);
       const flags = FLAGS.filter(([k]) => p[k]);
-      body = `<dl class="facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
-        <div class="flags">${flags.length ? flags.map(([, t, cls]) => `<span class="flag ${cls || ''}">${t}</span>`).join('') : '<span class="flag ok">Без открити ограничения</span>'}</div>
+      body = `<div class="flags">${flags.length ? flags.map(([, t, cls]) => `<span class="flag ${cls || ''}">${t}</span>`).join('') : '<span class="flag ok">Без открити ограничения</span>'}</div>
         ${notes.map((n) => `<p class="note">${n}</p>`).join('')}
-        ${altApplies ? `<p class="alt">Допълнително: ${esc(alt)}</p>` : ''}`;
+        <details class="more-facts" ${store.get('varna-plots:facts-open', false) ? 'open' : ''}>
+          <summary>Подробности за парцела</summary>
+          <dl class="facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
+          ${altApplies ? `<p class="alt">Допълнително: ${esc(alt)}</p>` : ''}
+        </details>`;
     } else {
       body = `<p class="loading-text">Зареждане на подробностите…</p>`;
     }
@@ -958,14 +984,7 @@
         <div><b>${num(r.area)} м²</b><span>Площ</span></div>
         ${r.max_floor ? `<div><b>${num(r.max_floor)} м²</b><span>Макс. РЗП по ОУП</span></div>` : ''}
       </div>
-      ${(state.auctionsByPlot.get(id) || []).map((a) => `
-        <a class="auction-card" href="${esc(a.url)}" target="_blank" rel="noopener">
-          <span class="ac-title">В публична продан · ЧСИ</span>
-          <span class="ac-price">${a.price_eur != null ? num(a.price_eur, ' €') : '—'}<small>начална цена</small></span>
-          <span class="ac-meta">${esc(a.type)}${a.area_m2 ? ' · ' + num(a.area_m2, ' м²') : ''}${a.period_to ? ` · срок до ${shortDate(a.period_to)}` : ''}${a.announce ? ` · обявяване ${shortDate(a.announce)}` : ''}</span>
-          <span class="ac-meta">${esc(a.bailiff)}</span>
-          <span class="ac-go">Обява на ЧСИ ↗</span>
-        </a>`).join('')}
+      ${signalsHtml(id)}
       ${ownersHtml}
       ${fav ? `<textarea class="fav-note" placeholder="Бележка (пази се с любимите)">${esc(fav.note || '')}</textarea>` : ''}
       ${body}
@@ -985,96 +1004,156 @@
     const note = d.querySelector('.fav-note');
     if (note) note.oninput = () => { const f = state.favs.get(id); if (f) { f.note = note.value; saveFavs(); } };
     d.querySelectorAll('[data-ent]').forEach((b) => { b.onclick = () => chooseEntity(state.entities[+b.dataset.ent]); });
+    const more = d.querySelector('.more-facts');
+    if (more) more.addEventListener('toggle', () => store.set('varna-plots:facts-open', more.open));
   }
 
-  // ---------- Търгове tab (bailiff public sales) ----------
-  const AUCTION_TYPES = {
-    plots: 'Парцели', land: 'Земя', homes: 'Жилища и къщи', other: 'Други',
+  // ---------- "Ново": one feed of events from every source ----------
+  const EVENT = {
+    auction: { label: 'Търг', plural: 'Търгове', color: 'var(--reg)' },
+    pup_request: { label: 'Поискан ПУП', plural: 'Поискан ПУП', color: '#0f6e8c' },
+    pup_approved: { label: 'Одобрен ПУП', plural: 'Одобрен ПУП', color: '#7c3aed' },
   };
-  function auctionKind(t) {
-    if (/Парцел/.test(t)) return 'plots';
-    if (/Земеделск/.test(t)) return 'land';
-    if (/апартамент|Мезонет|Ателие|Стая|Къща|Вила|Етаж от къща|Жилищна сграда/.test(t)) return 'homes';
-    return 'other';
-  }
   const today = new Date().toISOString().slice(0, 10);
   const shortDate = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}` : '');
-  function initAuctions(data) {
-    state.auctionsUpdated = data.updated || '';
-    state.auctions = Object.values(data.listings)
-      .filter((a) => !a.removed && (!a.announce || a.announce >= today))
-      .map((a) => ({ ...a, kind: auctionKind(a.type), all_ids: a.cad_ids, plot_ids: a.plot_ids.filter((id) => state.byId.has(id)) }));
-    state.auctionsByPlot = new Map();
-    state.auctions.forEach((a) => a.plot_ids.forEach((id) => {
-      if (!state.auctionsByPlot.has(id)) state.auctionsByPlot.set(id, []);
-      state.auctionsByPlot.get(id).push(a);
+  const longDate = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}` : '');
+  function initFeed(auctions, pup) {
+    const events = [];
+    if (auctions) {
+      state.feedUpdated = auctions.updated || '';
+      Object.values(auctions.listings)
+        .filter((a) => !a.removed && (!a.announce || a.announce >= today))
+        .forEach((a) => events.push({
+          kind: 'auction', date: a.published || a.first_seen, a,
+          all_ids: a.cad_ids, plot_ids: a.plot_ids.filter((id) => state.byId.has(id)),
+        }));
+    }
+    if (pup) {
+      pup.requests.forEach((r) => events.push({ kind: 'pup_request', date: r.date, r, all_ids: r.plot_ids, plot_ids: r.plot_ids.filter((id) => state.byId.has(id)) }));
+      pup.approvals.forEach((r) => events.push({ kind: 'pup_approved', date: r.date, r, all_ids: r.plot_ids, plot_ids: r.plot_ids.filter((id) => state.byId.has(id)) }));
+    }
+    events.sort((x, y) => (y.date || '').localeCompare(x.date || ''));
+    state.events = events;
+    state.signalsByPlot = new Map();
+    events.forEach((e) => e.plot_ids.forEach((id) => {
+      if (!state.signalsByPlot.has(id)) state.signalsByPlot.set(id, []);
+      state.signalsByPlot.get(id).push(e);
     }));
-    $('#n-auctions').textContent = state.auctions.length ? nf.format(state.auctions.length) : '';
     const counts = {};
-    state.auctions.forEach((a) => { counts[a.kind] = (counts[a.kind] || 0) + 1; });
-    $('#auction-types').innerHTML = Object.entries(AUCTION_TYPES).map(([k, label]) =>
-      `<label class="lchip"><input type="checkbox" value="${k}" ${state.auctionTypes.has(k) ? 'checked' : ''}><span>${label} ${counts[k] || 0}</span></label>`).join('');
-    $('#auction-types').querySelectorAll('input').forEach((cb) => cb.addEventListener('change', () => {
-      cb.checked ? state.auctionTypes.add(cb.value) : state.auctionTypes.delete(cb.value);
-      renderAuctions();
+    events.forEach((e) => { counts[e.kind] = (counts[e.kind] || 0) + 1; });
+    $('#feed-types').innerHTML = Object.entries(EVENT).filter(([k]) => counts[k]).map(([k, d]) =>
+      `<label class="lchip"><input type="checkbox" value="${k}" ${state.feedTypes.has(k) ? 'checked' : ''}><span>${d.plural}</span></label>`).join('');
+    $('#feed-types').querySelectorAll('input').forEach((cb) => cb.addEventListener('change', () => {
+      cb.checked ? state.feedTypes.add(cb.value) : state.feedTypes.delete(cb.value);
+      renderFeed();
     }));
-    $('#auction-city').addEventListener('change', renderAuctions);
-    $('#auction-sort').addEventListener('change', renderAuctions);
-    renderAuctions();
+    $('#feed-linked').addEventListener('change', renderFeed);
+    $('#feed-period').addEventListener('change', renderFeed);
+    const recent = events.filter((e) => e.date && (Date.parse(today) - Date.parse(e.date)) / 864e5 <= 7).length;
+    $('#n-feed').textContent = recent ? nf.format(recent) : '';
+    renderFeed();
     if (state.current) renderDetail();
   }
-  function visibleAuctions() {
-    const cityOnly = $('#auction-city').checked;
-    const sort = $('#auction-sort').value;
-    const list = state.auctions.filter((a) => state.auctionTypes.has(a.kind) && (!cityOnly || a.settlement === 'гр. Варна'));
-    const by = {
-      deadline: (a, b) => (a.period_to || '9').localeCompare(b.period_to || '9'),
-      new: (a, b) => (b.first_seen || '').localeCompare(a.first_seen || '') || (b.published || '').localeCompare(a.published || ''),
-      price: (a, b) => (a.price_eur ?? Infinity) - (b.price_eur ?? Infinity),
-      area: (a, b) => (b.area_m2 || 0) - (a.area_m2 || 0),
-    }[sort];
-    return list.sort(by);
+  function visibleFeed() {
+    const days = +$('#feed-period').value;
+    const since = days ? new Date(Date.now() - days * 864e5).toISOString().slice(0, 10) : '';
+    const linkedOnly = $('#feed-linked').checked;
+    return state.events.filter((e) => state.feedTypes.has(e.kind)
+      && (e.kind === 'auction' || !since || (e.date || '') >= since)
+      && (!linkedOnly || e.plot_ids.length));
   }
-  function renderAuctions() {
-    const list = visibleAuctions();
-    const linked = list.filter((a) => a.plot_ids.length).length;
-    const upd = state.auctionsUpdated ? ` · обновено ${shortDate(state.auctionsUpdated.slice(0, 10))} в ${state.auctionsUpdated.slice(11, 16)}` : '';
-    $('#auctions-summary').innerHTML = `<b>${nf.format(list.length)}</b> продажби · <b>${nf.format(linked)}</b> на картата${upd}`;
-    const ol = $('#auction-results');
+  const FEED_LIMIT = 300;
+  function eventRow(e) {
+    const plot = e.plot_ids.length ? state.byId.get(e.plot_ids[0]) : null;
+    const k = EVENT[e.kind];
+    let title = '', price = '', where = '', chips = [];
+    if (e.kind === 'auction') {
+      const a = e.a;
+      title = esc(a.type);
+      price = a.price_eur != null ? num(a.price_eur, ' €') : '';
+      where = `${esc(a.settlement)}${a.address && a.address !== a.settlement ? ' · ' + esc(a.address.replace(/^(гр\.|с\.)\s*[^,]+,\s*/, '')) : ''}`;
+      if (a.area_m2) chips.push(`<span class="chip-s plain mono">${num(a.area_m2, ' м²')}</span>`);
+      if (a.period_to) chips.push(`<span class="chip-s plain">срок до ${shortDate(a.period_to)}</span>`);
+      if (a.price_change_pct < 0) chips.push(`<span class="chip-s" style="--c:#16a34a">${a.price_change_pct}% спрямо предишна</span>`);
+    } else if (e.kind === 'pup_request') {
+      const r = e.r;
+      title = esc(r.plan || 'ПУП');
+      where = [r.district, r.place].filter(Boolean).map(esc).join(' · ');
+      if (r.kv) chips.push(`<span class="chip-s plain">кв. ${esc(r.kv)}</span>`);
+      chips.push(`<span class="chip-s plain">заповед ${esc(r.order)}</span>`);
+    } else {
+      const r = e.r;
+      title = 'ПУП одобрен';
+      where = esc(r.title);
+      chips.push(`<span class="chip-s plain">заповед ${esc(r.order)}</span>`);
+    }
+    const owner = plot ? `<span class="chip-s" style="--c:${OWNER[plot.cat].color}">${esc(plot.owner)}</span>`
+      : e.all_ids && e.all_ids.length ? `<span class="chip-s plain mono" title="Извън картата">${esc(e.all_ids[0])}</span>` : '';
+    return `<div class="main">
+        <div class="line1"><span class="ev-kind" style="--c:${k.color}">${k.label}</span><span class="ev-date">${longDate(e.date)}</span></div>
+        <div class="line1"><span class="atype">${title}</span>${price ? `<span class="aprice">${price}</span>` : ''}</div>
+        <div class="owner person">${where}</div>
+        <div class="chips">${plot ? `<span class="chip-s plain">${cad(plot.id)}</span>` : ''}${chips.join('')}${owner}</div>
+      </div><span class="go">${plot ? '›' : e.kind === 'pup_request' ? '' : '↗'}</span>`;
+  }
+  function renderFeed() {
+    const list = visibleFeed();
+    const linked = list.filter((e) => e.plot_ids.length).length;
+    const upd = state.feedUpdated ? ` · обновено ${longDate(state.feedUpdated.slice(0, 10))}` : '';
+    $('#feed-summary').innerHTML = `<b>${nf.format(list.length)}</b> събития · <b>${nf.format(linked)}</b> на картата${upd}`;
+    const ol = $('#feed-results');
     ol.innerHTML = '';
     const frag = document.createDocumentFragment();
-    list.forEach((a) => {
-      const plot = a.plot_ids.length ? state.byId.get(a.plot_ids[0]) : null;
-      const isNew = a.first_seen && (Date.parse(today) - Date.parse(a.first_seen)) / 864e5 <= 3;
+    list.slice(0, FEED_LIMIT).forEach((e) => {
       const li = document.createElement('li');
-      li.className = 'auction';
-      li.innerHTML = `<div class="main">
-          <div class="line1"><span class="atype">${esc(a.type)}</span><span class="aprice">${a.price_eur != null ? num(a.price_eur, ' €') : '—'}</span></div>
-          <div class="owner">${esc(a.settlement)}${a.address && a.address !== a.settlement ? ' · ' + esc(a.address.replace(/^(гр\.|с\.)\s*[^,]+,\s*/, '')) : ''}</div>
-          <div class="chips">
-            ${a.area_m2 ? `<span class="chip-s plain mono">${num(a.area_m2, ' м²')}</span>` : ''}
-            ${a.period_to ? `<span class="chip-s plain">до ${shortDate(a.period_to)}</span>` : ''}
-            ${isNew ? '<span class="chip-s" style="--c:var(--accent)">нова</span>' : ''}
-            ${a.price_change_pct < 0 ? `<span class="chip-s" style="--c:#16a34a">${a.price_change_pct}% спрямо предишна</span>` : ''}
-            ${plot ? `<span class="chip-s" style="--c:${OWNER[plot.cat].color}">${esc(plot.owner)}</span>`
-              : a.all_ids && a.all_ids.length ? `<span class="chip-s plain mono" title="Извън картата на гр. Варна">${esc(a.all_ids[0])}${a.all_ids.length > 1 ? ` +${a.all_ids.length - 1}` : ''}</span>`
-              : '<span class="chip-s plain">без идентификатор</span>'}
-          </div>
-        </div><span class="go">${plot ? '›' : '↗'}</span>`;
+      li.className = 'event';
+      li.innerHTML = eventRow(e);
       li.addEventListener('click', () => {
-        if (plot) openDetail(plot.id, true);
-        else window.open(a.url, '_blank', 'noopener');
+        if (e.plot_ids.length) openDetail(e.plot_ids[0], true);
+        else if (e.kind === 'auction') window.open(e.a.url, '_blank', 'noopener');
+        else if (e.r && e.r.url) window.open(e.r.url, '_blank', 'noopener');
       });
       frag.appendChild(li);
     });
+    if (list.length > FEED_LIMIT) {
+      const more = document.createElement('li');
+      more.className = 'more';
+      more.textContent = `… и още ${nf.format(list.length - FEED_LIMIT)}. Стеснете периода или типа.`;
+      frag.appendChild(more);
+    }
     if (!list.length) {
       const li = document.createElement('li');
       li.className = 'more';
-      li.textContent = 'Няма продажби по тези филтри.';
+      li.textContent = 'Няма събития по тези филтри.';
       frag.appendChild(li);
     }
     ol.appendChild(frag);
-    if (state.auctionMode) apply();
+    if (state.feedMode) apply();
+  }
+  // Signals shown at the top of a plot's details.
+  function signalsHtml(id) {
+    const list = state.signalsByPlot.get(id) || [];
+    if (!list.length) return '';
+    return `<div class="signals"><h3>Сигнали</h3>${list.map((e) => {
+      if (e.kind === 'auction') {
+        const a = e.a;
+        return `<a class="signal auction-card" href="${esc(a.url)}" target="_blank" rel="noopener">
+          <span class="ac-title">В публична продан · ЧСИ</span>
+          <span class="ac-price">${a.price_eur != null ? num(a.price_eur, ' €') : '—'}<small>начална цена</small></span>
+          <span class="ac-meta">${esc(a.type)}${a.area_m2 ? ' · ' + num(a.area_m2, ' м²') : ''}${a.period_to ? ` · срок до ${shortDate(a.period_to)}` : ''}${a.announce ? ` · обявяване ${shortDate(a.announce)}` : ''}</span>
+          <span class="ac-meta">${esc(a.bailiff)}</span>
+          <span class="ac-go">Обява на ЧСИ ↗</span>
+        </a>`;
+      }
+      const r = e.r;
+      const k = EVENT[e.kind];
+      const inner = `<span class="sg-kind" style="--c:${k.color}">${k.label}</span>
+          <span class="sg-text">${e.kind === 'pup_request' ? `${esc(r.plan)} · заповед ${esc(r.order)} от ${longDate(r.date)}` : `Заповед ${esc(r.order)} от ${longDate(r.date)}`}</span>
+          ${e.kind === 'pup_approved' ? `<span class="sg-sub">${esc(r.title)}</span>` : ''}`;
+      return r.url
+        ? `<a class="signal" href="${esc(r.url)}" target="_blank" rel="noopener">${inner}<span class="sg-go">Заповед и чертеж ↗</span></a>`
+        : `<div class="signal">${inner}</div>`;
+    }).join('')}</div>`;
   }
 
   // ---------- Фирми tab ----------
@@ -1422,5 +1501,5 @@
   initTools();
   initLayersPanel();
   initSheet();
-  setTab('filters');
+  setTab('list');
 })();

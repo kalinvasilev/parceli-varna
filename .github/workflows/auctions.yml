@@ -1,4 +1,4 @@
-# Every morning: read new bailiff (ЧСИ) public sales for the Varna court region and republish the site.
+# Every morning: refresh the "Ново" feed (ЧСИ public sales + ПУП registers of АГУП Варна) and republish the site.
 name: Търгове ЧСИ
 
 on:
@@ -28,18 +28,21 @@ jobs:
       - name: Read new sales
         run: python tools/bcpea.py data/auctions.json
 
+      - name: Read ПУП registers
+        run: python tools/agup.py data/pup.json
+
       - name: Save and publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "parceli-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/auctions.json
+          git add data/auctions.json data/pup.json
           if git diff --cached --quiet; then
             echo "No changes"
             exit 0
           fi
-          git commit -m "Търгове: обновяване $(date -u +%F)"
+          git commit -m "Данни: обновяване $(date -u +%F)"
           git push
           # Pushes made with the workflow token don't always start a Pages build, so ask for one.
           gh api -X POST "repos/${{ github.repository }}/pages/builds" || true
