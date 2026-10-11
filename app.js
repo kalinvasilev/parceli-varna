@@ -39,7 +39,7 @@
   const WMS = 'https://gis.varnamap.bg/geoserver/wms';
   const POLY_ZOOM = 15;
   const LIST_LIMIT = 300;
-  const MAX_DOTS = 20000;
+  const MAX_DOTS = 70000;
   const MAX_SELECT_ALL = 2000;
   const KEY = { favs: 'varna-plots:favs:v1', filters: 'varna-plots:filters:v1' };
 
@@ -159,17 +159,118 @@
   const restrictions = L.layerGroup(Object.values(restrictionParts));
 
   // Plot outlines (zoom >= POLY_ZOOM, loaded per grid cell) and dots (city scale) share one canvas.
+  let loadingCell = null;   // set while a cell's features are added, so each outline knows its cell
+  const cellLayers = new Map();
   const plots = L.geoJSON(null, {
     pane: 'plots', renderer: plotsCanvas,
     style: (f) => polyStyle(f.properties.id),
     onEachFeature: (f, layer) => {
+      plotLayers.set(f.properties.id, layer);
+      if (loadingCell) cellLayers.get(loadingCell).push(layer);
       layer.on('click', (e) => onPlotClick(f.properties.id, e.originalEvent));
       if (canHover) layer.bindTooltip(() => `${f.properties.id} · ${esc(f.properties.owner)}`, { sticky: true });
     },
   });
   const plotLayers = new Map();
   const grid = { cell: 0.01, cells: {}, loaded: new Set() };
-  const dots = L.layerGroup();
+  const DotLayer = L.Layer.extend({
+    initialize() { this._rows = []; this._hit = new Map(); },
+    onAdd(m) {
+      this._canvas = L.DomUtil.create('canvas', 'dot-layer');
+      this._canvas.style.position = 'absolute';
+      this._canvas.style.pointerEvents = 'none';
+      m.getPane('plots').appendChild(this._canvas);
+      this._tip = L.tooltip({ direction: 'top', offset: [0, -6] });
+      m.on('moveend resize', this._reset, this);
+      m.on('zoomstart', this._hide, this);
+      m.on('click', this._click, this);
+      if (canHover) m.on('mousemove', this._move, this);
+      this._reset();
+    },
+    onRemove(m) {
+      L.DomUtil.remove(this._canvas);
+      m.off('moveend resize', this._reset, this);
+      m.off('zoomstart', this._hide, this);
+      m.off('click', this._click, this);
+      m.off('mousemove', this._move, this);
+      m.closeTooltip(this._tip);
+      m.getContainer().style.cursor = '';
+    },
+    setRows(rows) { this._rows = rows; if (this._map) this._draw(); },
+    _hide() { this._canvas.style.visibility = 'hidden'; },
+    _reset() {
+      const m = this._map;
+      const size = m.getSize();
+      const dpr = window.devicePixelRatio || 1;
+      L.DomUtil.setPosition(this._canvas, m.containerPointToLayerPoint([0, 0]));
+      this._canvas.width = size.x * dpr;
+      this._canvas.height = size.y * dpr;
+      this._canvas.style.width = size.x + 'px';
+      this._canvas.style.height = size.y + 'px';
+      this._canvas.style.visibility = '';
+      this._draw();
+    },
+    _draw() {
+      const m = this._map;
+      const ctx = this._canvas.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+      const size = m.getSize();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, size.x, size.y);
+      this._hit = new Map();
+      const B = 24;
+      // Draw big plots first so small ones stay visible on top.
+      const rows = [...this._rows].sort((a, b) => b.area - a.area);
+      for (const r of rows) {
+        const p = m.latLngToContainerPoint([r.lat, r.lon]);
+        if (p.x < -10 || p.y < -10 || p.x > size.x + 10 || p.y > size.y + 10) continue;
+        const fav = state.favs.has(r.id);
+        const sel = state.sel.has(r.id);
+        const radius = Math.max(3, Math.min(9, Math.sqrt(r.area) / 12)) + (fav || sel ? 2 : 0);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        ctx.globalAlpha = state.matchSet.has(r.id) ? 0.85 : 0.4;
+        ctx.fillStyle = colorOf(r);
+        ctx.fill();
+        ctx.globalAlpha = 0.95;
+        ctx.lineWidth = sel || fav ? 2.5 : 0.8;
+        ctx.strokeStyle = sel ? '#2563eb' : fav ? '#eab308' : '#ffffff';
+        ctx.stroke();
+        const key = `${Math.floor(p.x / B)},${Math.floor(p.y / B)}`;
+        if (!this._hit.has(key)) this._hit.set(key, []);
+        this._hit.get(key).push([p.x, p.y, radius, r]);
+      }
+      ctx.globalAlpha = 1;
+    },
+    _find(pt) {
+      const B = 24;
+      const tol = canHover ? 2 : 8;
+      let best = null, bestD = Infinity;
+      for (let i = -1; i <= 1; i++) {
+        for (let j = -1; j <= 1; j++) {
+          for (const [x, y, rad, r] of this._hit.get(`${Math.floor(pt.x / B) + i},${Math.floor(pt.y / B) + j}`) || []) {
+            const d = Math.hypot(x - pt.x, y - pt.y);
+            if (d <= rad + tol && d < bestD) { best = r; bestD = d; }
+          }
+        }
+      }
+      return best;
+    },
+    _click(e) {
+      const r = this._find(e.containerPoint);
+      if (r) onPlotClick(r.id, e.originalEvent);
+    },
+    _move(e) {
+      const r = this._find(e.containerPoint);
+      const m = this._map;
+      m.getContainer().style.cursor = r ? 'pointer' : '';
+      if (r) {
+        this._tip.setLatLng([r.lat, r.lon]).setContent(`${r.id} · ${num(r.area, ' м²')}<br>${esc(r.owner)}`);
+        if (!m.hasLayer(this._tip)) m.openTooltip(this._tip);
+      } else if (m.hasLayer(this._tip)) m.closeTooltip(this._tip);
+    },
+  });
+  const dots = new DotLayer();
   window.__parceli = { map, plots, plotLayers, grid, state };  // for debugging in the console
 
   const OVERLAYS = { zones, restrictions, buildings: buildingsWms, cadastre: cadastreWms };
@@ -257,8 +358,11 @@
         if (!grid.cells[key] || grid.loaded.has(key)) continue;
         grid.loaded.add(key);
         load(`grid/${key}.json`).then((fc) => {
+          if (!grid.loaded.has(key)) return;   // unloaded while it was downloading
+          cellLayers.set(key, []);
+          loadingCell = key;
           plots.addData(fc);
-          plots.eachLayer((l) => plotLayers.set(l.feature.properties.id, l));
+          loadingCell = null;
           restyle([...state.sel, state.current].filter(Boolean));
           if (state.pendingDetail && plotLayers.has(state.pendingDetail) && state.pendingDetail === state.current) {
             state.pendingDetail = null;
@@ -266,6 +370,24 @@
           }
         }).catch(() => grid.loaded.delete(key));
       }
+    }
+    unloadFarCells();
+  }
+  function unloadFarCells() {
+    const far = map.getBounds().pad(1.5);
+    const c = grid.cell;
+    for (const [key, layers] of cellLayers) {
+      const [i, j] = key.split('_').map(Number);
+      const cellBounds = L.latLngBounds([j * c, i * c], [(j + 1) * c, (i + 1) * c]);
+      if (far.intersects(cellBounds)) continue;
+      for (const l of layers) {
+        const id = l.feature.properties.id;
+        if (id === state.current) continue;
+        plots.removeLayer(l);
+        plotLayers.delete(id);
+      }
+      cellLayers.delete(key);
+      grid.loaded.delete(key);
     }
   }
 
@@ -492,23 +614,10 @@
   }
 
   function renderDots() {
-    dots.clearLayers();
     const extra = state.tab === 'favs'
       ? [...state.favs.keys()].filter((id) => !state.matchSet.has(id)).map((id) => state.byId.get(id)).filter(Boolean)
       : [];
-    const list = state.matched.slice(0, MAX_DOTS).concat(extra);
-    for (const r of list) {
-      const fav = state.favs.has(r.id);
-      const sel = state.sel.has(r.id);
-      const m = L.circleMarker([r.lat, r.lon], {
-        renderer: plotsCanvas, pane: 'plots',
-        radius: Math.max(3, Math.min(9, Math.sqrt(r.area) / 12)) + (fav || sel ? 2 : 0),
-        weight: sel || fav ? 2.5 : 0.8, color: sel ? '#2563eb' : fav ? '#eab308' : '#fff', opacity: 0.95,
-        fillColor: colorOf(r), fillOpacity: state.matchSet.has(r.id) ? 0.85 : 0.35,
-      }).on('click', (e) => onPlotClick(r.id, e.originalEvent));
-      if (canHover) m.bindTooltip(`${r.id} · ${num(r.area, ' м²')}<br>${esc(r.owner)}`);
-      m.addTo(dots);
-    }
+    dots.setRows(state.matched.slice(0, MAX_DOTS).concat(extra));
   }
 
   function renderActiveFilter() {
