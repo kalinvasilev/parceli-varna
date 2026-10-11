@@ -24,7 +24,8 @@
     </div>
     <nav class="tabs" role="tablist" aria-label="Главно меню">
       <button type="button" role="tab" data-tab="list">Парцели <span class="count" id="n-list"></span></button>
-      <button type="button" role="tab" data-tab="feed" title="Търгове и ПУП по парцелите">Сигнали <span class="count" id="n-feed"></span></button>
+      <button type="button" role="tab" data-tab="auctions">Търгове <span class="count" id="n-auctions"></span></button>
+      <button type="button" role="tab" data-tab="pup">ПУП <span class="count" id="n-pup"></span></button>
       <button type="button" role="tab" data-tab="owners">Фирми</button>
       <button type="button" role="tab" data-tab="favs">Любими <span class="count" id="n-favs"></span></button>
     </nav>
@@ -45,7 +46,7 @@
 
     <div class="views">
       <section class="view" id="view-filters" role="tabpanel">
-        <div class="subpage-top"><button type="button" class="back" id="filters-back">‹ Парцели</button><span>Филтри</span></div>
+        <div class="subpage-top"><span>Какво търсите?</span></div>
         <div class="group">
           <h3>Бързо</h3>
           <div class="presets" id="presets">
@@ -184,23 +185,42 @@
         <ol class="results" id="owner-results"></ol>
       </section>
 
-      <section class="view" id="view-feed" role="tabpanel">
+      <section class="view" id="view-auctions" role="tabpanel">
         <div class="list-head">
-          <p class="feed-intro">Какво се случва с парцелите: публични продажби на ЧСИ, поискани и одобрени ПУП. Най-новото е най-отгоре.</p>
-          <div class="chips-wrap" id="feed-types"></div>
+          <p class="feed-intro">Публични продажби на имоти от частни съдебни изпълнители, окръжен съд Варна.</p>
+          <div class="chips-wrap" id="auction-kinds"></div>
           <div class="field">
-            <label class="lchip"><input type="checkbox" id="feed-linked"><span>Само на картата</span></label>
-            <select id="feed-period" aria-label="Период">
+            <label class="lchip"><input type="checkbox" id="auction-city"><span>Само гр. Варна</span></label>
+            <select id="auction-sort" aria-label="Подреди търговете">
+              <option value="deadline">По краен срок</option>
+              <option value="new">Най-нови</option>
+              <option value="price">По цена</option>
+              <option value="area">По площ</option>
+            </select>
+          </div>
+          <p class="summary" id="auctions-summary">Зареждане…</p>
+        </div>
+        <ol class="results" id="auction-results"></ol>
+        <p class="source-note">Източник: <a href="https://sales.bcpea.org/properties?court=3" target="_blank" rel="noopener">Регистър на публичните продажби на ЧСИ</a>. Обновява се всяка сутрин.</p>
+      </section>
+
+      <section class="view" id="view-pup" role="tabpanel">
+        <div class="list-head">
+          <p class="feed-intro">Поискани и одобрени подробни устройствени планове (ПУП) в гр. Варна. Поисканият ПУП е първият знак, че някой се готви да строи.</p>
+          <div class="chips-wrap" id="pup-types"></div>
+          <div class="field">
+            <label class="lchip"><input type="checkbox" id="pup-linked"><span>Само на картата</span></label>
+            <select id="pup-period" aria-label="Период">
               <option value="30">Последните 30 дни</option>
               <option value="90" selected>Последните 90 дни</option>
               <option value="365">Последната година</option>
-              <option value="0">Всичко</option>
+              <option value="0">Всички години</option>
             </select>
           </div>
-          <p class="summary" id="feed-summary">Зареждане…</p>
+          <p class="summary" id="pup-summary">Зареждане…</p>
         </div>
-        <ol class="results" id="feed-results"></ol>
-        <p class="source-note">Източници: <a href="https://sales.bcpea.org/properties?court=3" target="_blank" rel="noopener">публични продажби на ЧСИ</a> (окръжен съд Варна) и <a href="https://agup.varna.bg/" target="_blank" rel="noopener">регистрите на АГУП Варна</a>. Обновява се всяка сутрин.</p>
+        <ol class="results" id="pup-results"></ol>
+        <p class="source-note">Източник: <a href="https://agup.varna.bg/" target="_blank" rel="noopener">регистрите на АГУП Варна</a>. Обновява се всяка сутрин.</p>
       </section>
 
       <section class="view" id="view-favs" role="tabpanel">
@@ -237,6 +257,6 @@
   <div id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script src="app.js?v=33"></script>
+  <script src="app.js?v=35"></script>
 </body>
 </html>

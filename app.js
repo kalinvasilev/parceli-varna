@@ -129,8 +129,9 @@
     favs: new Map(Object.entries(store.get(KEY.favs, {}))),
     markMode: false,
     tab: 'filters',
-    events: [], signalsByPlot: new Map(), feedMode: false, feedUpdated: '',
-    feedTypes: new Set(['auction', 'pup_request', 'pup_approved']),
+    events: [], signalsByPlot: new Map(), mode: null, feedUpdated: '',
+    auctionKinds: new Set(['plots', 'land']),
+    pupTypes: new Set(['pup_request', 'pup_approved']),
   };
 
   // ---------- Map ----------
@@ -512,7 +513,7 @@
     }
     const one = h.get('id');
     if (one && state.byId.has(one)) openDetail(one, true);
-    else setTab('list');
+    else setTab('filters');
   }
 
   // ---------- Controls ----------
@@ -630,9 +631,8 @@
       toast('Филтрите са върнати по подразбиране');
     });
 
-    document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
+    document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab === 'list' ? 'filters' : b.dataset.tab)));
     $('#open-filters').addEventListener('click', () => setTab('filters'));
-    $('#filters-back').addEventListener('click', () => setTab('list'));
     $('#filters-apply').addEventListener('click', () => setTab('list'));
     $('#fit-results').addEventListener('click', () => { fitRows(state.matched.slice(0, MAX_DOTS)); });
     $('#select-all').addEventListener('click', () => {
@@ -677,9 +677,10 @@
     const t = state.tab;
     const n = (x) => (x ? `<span>${nf.format(x)}</span>` : '');
     const titles = {
-      list: `Парцели${n(state.matched.length && !state.feedMode ? state.matched.length : 0)}`,
+      list: `Парцели${n(state.matched.length && !state.mode ? state.matched.length : 0)}`,
       filters: 'Филтри',
-      feed: 'Сигнали',
+      auctions: 'Търгове',
+      pup: 'ПУП',
       owners: 'Фирми',
       favs: `Любими${n(state.favs.size)}`,
       detail: state.current ? cad(state.current) : 'Парцел',
@@ -690,9 +691,9 @@
     const wasFavs = state.tab === 'favs';
     state.tab = tab;
     if (tab !== 'detail') {
-      const want = tab === 'feed';
-      if (want !== state.feedMode) {
-        state.feedMode = want;
+      const want = tab === 'auctions' || tab === 'pup' ? tab : null;
+      if (want !== state.mode) {
+        state.mode = want;
         if (state.rows.length) apply();
       }
     }
@@ -718,8 +719,8 @@
     const zg = $('#zone-group').value;
     const sort = $('#sort').value;
     let list;
-    if (state.feedMode) {
-      const ids = new Set(visibleFeed().flatMap((e) => e.plot_ids));
+    if (state.mode) {
+      const ids = new Set(visibleEvents(state.mode).flatMap((e) => e.plot_ids));
       list = [...ids].map((id) => state.byId.get(id)).filter(Boolean);
     } else if (state.entity) {
       list = state.entity.ids.map((id) => state.byId.get(id)).filter(Boolean);
@@ -781,7 +782,7 @@
   function renderSummary() {
     const list = state.matched;
     const total = list.reduce((s, r) => s + (r.area || 0), 0);
-    if (!state.feedMode) $('#n-list').textContent = list.length ? nf.format(list.length) : '';
+    if (!state.mode) $('#n-list').textContent = list.length ? nf.format(list.length) : '';
     $('#summary').innerHTML = list.length
       ? `<b>${nf.format(list.length)}</b> парцела · <b>${ha(total)}</b> ха${state.entity || state.text ? ' · филтрите не важат при търсене' : ''}`
         + (list.length > MAX_DOTS ? `<br>На картата: най-големите ${nf.format(MAX_DOTS)}.` : '')
@@ -1024,7 +1025,7 @@
     if (more) more.addEventListener('toggle', () => store.set('varna-plots:facts-open', more.open));
   }
 
-  // ---------- "Сигнали": one feed of events from every source ----------
+  // ---------- Търгове and ПУП sections (events from the daily sources) ----------
   const EVENT = {
     auction: { label: 'Търг', plural: 'Търгове', color: 'var(--reg)' },
     pup_request: { label: 'Поискан ПУП', plural: 'Поискан ПУП', color: '#0f6e8c' },
@@ -1033,6 +1034,22 @@
   const today = new Date().toISOString().slice(0, 10);
   const shortDate = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}` : '');
   const longDate = (iso) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}` : '');
+  const AUCTION_KINDS = { plots: 'Парцели', land: 'Земя', homes: 'Жилища и къщи', other: 'Други' };
+  function auctionKind(t) {
+    if (/Парцел/.test(t)) return 'plots';
+    if (/Земеделск/.test(t)) return 'land';
+    if (/апартамент|Мезонет|Ателие|Стая|Къща|Вила|Етаж от къща|Жилищна сграда/.test(t)) return 'homes';
+    return 'other';
+  }
+  const PUP_TYPES = { pup_request: 'Поискани', pup_approved: 'Одобрени' };
+  function toggleChips(el, defs, set, counts, onChange) {
+    el.innerHTML = Object.entries(defs).filter(([k]) => counts[k]).map(([k, label]) =>
+      `<label class="lchip"><input type="checkbox" value="${k}" ${set.has(k) ? 'checked' : ''}><span>${label} ${nf.format(counts[k])}</span></label>`).join('');
+    el.querySelectorAll('input').forEach((cb) => cb.addEventListener('change', () => {
+      cb.checked ? set.add(cb.value) : set.delete(cb.value);
+      onChange();
+    }));
+  }
   function initFeed(auctions, pup) {
     const events = [];
     if (auctions) {
@@ -1040,7 +1057,7 @@
       Object.values(auctions.listings)
         .filter((a) => !a.removed && (!a.announce || a.announce >= today))
         .forEach((a) => events.push({
-          kind: 'auction', date: a.published || a.first_seen, a,
+          kind: 'auction', date: a.published || a.first_seen, a, akind: auctionKind(a.type),
           all_ids: a.cad_ids, plot_ids: a.plot_ids.filter((id) => state.byId.has(id)),
         }));
     }
@@ -1055,29 +1072,44 @@
       if (!state.signalsByPlot.has(id)) state.signalsByPlot.set(id, []);
       state.signalsByPlot.get(id).push(e);
     }));
-    const counts = {};
-    events.forEach((e) => { counts[e.kind] = (counts[e.kind] || 0) + 1; });
-    $('#feed-types').innerHTML = Object.entries(EVENT).filter(([k]) => counts[k]).map(([k, d]) =>
-      `<label class="lchip"><input type="checkbox" value="${k}" ${state.feedTypes.has(k) ? 'checked' : ''}><span>${d.plural}</span></label>`).join('');
-    $('#feed-types').querySelectorAll('input').forEach((cb) => cb.addEventListener('change', () => {
-      cb.checked ? state.feedTypes.add(cb.value) : state.feedTypes.delete(cb.value);
-      renderFeed();
-    }));
-    $('#feed-linked').addEventListener('change', renderFeed);
-    $('#feed-period').addEventListener('change', renderFeed);
-    const recent = events.filter((e) => e.date && (Date.parse(today) - Date.parse(e.date)) / 864e5 <= 7).length;
-    $('#n-feed').textContent = recent ? nf.format(recent) : '';
-    $('#n-feed').title = recent ? `${recent} за последните 7 дни` : '';
-    renderFeed();
+    const akCounts = {}, pupCounts = {};
+    events.forEach((e) => {
+      if (e.kind === 'auction') akCounts[e.akind] = (akCounts[e.akind] || 0) + 1;
+      else pupCounts[e.kind] = (pupCounts[e.kind] || 0) + 1;
+    });
+    toggleChips($('#auction-kinds'), AUCTION_KINDS, state.auctionKinds, akCounts, () => renderEvents('auctions'));
+    toggleChips($('#pup-types'), PUP_TYPES, state.pupTypes, pupCounts, () => renderEvents('pup'));
+    $('#auction-city').addEventListener('change', () => renderEvents('auctions'));
+    $('#auction-sort').addEventListener('change', () => renderEvents('auctions'));
+    $('#pup-linked').addEventListener('change', () => renderEvents('pup'));
+    $('#pup-period').addEventListener('change', () => renderEvents('pup'));
+    const nAuctions = events.filter((e) => e.kind === 'auction').length;
+    $('#n-auctions').textContent = nAuctions ? nf.format(nAuctions) : '';
+    const recentPup = events.filter((e) => e.kind !== 'auction' && e.date && (Date.parse(today) - Date.parse(e.date)) / 864e5 <= 30).length;
+    $('#n-pup').textContent = recentPup ? nf.format(recentPup) : '';
+    $('#n-pup').title = recentPup ? `${recentPup} за последните 30 дни` : '';
+    renderEvents('auctions');
+    renderEvents('pup');
     if (state.current) renderDetail();
   }
-  function visibleFeed() {
-    const days = +$('#feed-period').value;
+  function visibleEvents(mode) {
+    if (mode === 'auctions') {
+      const cityOnly = $('#auction-city').checked;
+      const sort = $('#auction-sort').value;
+      const by = {
+        deadline: (x, y) => (x.a.period_to || '9').localeCompare(y.a.period_to || '9'),
+        new: (x, y) => (y.date || '').localeCompare(x.date || ''),
+        price: (x, y) => (x.a.price_eur ?? Infinity) - (y.a.price_eur ?? Infinity),
+        area: (x, y) => (y.a.area_m2 || 0) - (x.a.area_m2 || 0),
+      }[sort];
+      return state.events.filter((e) => e.kind === 'auction' && state.auctionKinds.has(e.akind)
+        && (!cityOnly || e.a.settlement === 'гр. Варна')).sort(by);
+    }
+    const days = +$('#pup-period').value;
     const since = days ? new Date(Date.now() - days * 864e5).toISOString().slice(0, 10) : '';
-    const linkedOnly = $('#feed-linked').checked;
-    return state.events.filter((e) => state.feedTypes.has(e.kind)
-      && (e.kind === 'auction' || !since || (e.date || '') >= since)
-      && (!linkedOnly || e.plot_ids.length));
+    const linkedOnly = $('#pup-linked').checked;
+    return state.events.filter((e) => state.pupTypes.has(e.kind)
+      && (!since || (e.date || '') >= since) && (!linkedOnly || e.plot_ids.length));
   }
   const FEED_LIMIT = 300;
   function eventRow(e) {
@@ -1106,19 +1138,23 @@
     }
     const owner = plot ? `<span class="chip-s" style="--c:${OWNER[plot.cat].color}">${esc(plot.owner)}</span>`
       : e.all_ids && e.all_ids.length ? `<span class="chip-s plain mono" title="Извън картата">${esc(e.all_ids[0])}</span>` : '';
+    // In Търгове every row is a sale, so the label line shows the date only; in ПУП it says which kind.
+    const label = e.kind === 'auction' ? '<span></span>' : `<span class="ev-kind" style="--c:${k.color}">${k.label}</span>`;
     return `<div class="main">
-        <div class="line1"><span class="ev-kind" style="--c:${k.color}">${k.label}</span><span class="ev-date">${longDate(e.date)}</span></div>
+        <div class="line1">${label}<span class="ev-date">${longDate(e.date)}</span></div>
         <div class="line1"><span class="atype">${title}</span>${price ? `<span class="aprice">${price}</span>` : ''}</div>
         <div class="owner person">${where}</div>
         <div class="chips">${plot ? `<span class="chip-s plain">${cad(plot.id)}</span>` : ''}${chips.join('')}${owner}</div>
       </div><span class="go">${plot ? '›' : e.kind === 'pup_request' ? '' : '↗'}</span>`;
   }
-  function renderFeed() {
-    const list = visibleFeed();
+  function renderEvents(mode) {
+    const list = visibleEvents(mode);
     const linked = list.filter((e) => e.plot_ids.length).length;
     const upd = state.feedUpdated ? ` · обновено ${longDate(state.feedUpdated.slice(0, 10))}` : '';
-    $('#feed-summary').innerHTML = `<b>${nf.format(list.length)}</b> събития · <b>${nf.format(linked)}</b> на картата${upd}`;
-    const ol = $('#feed-results');
+    const noun = mode === 'auctions' ? 'продажби' : 'ПУП';
+    $(mode === 'auctions' ? '#auctions-summary' : '#pup-summary').innerHTML =
+      `<b>${nf.format(list.length)}</b> ${noun} · <b>${nf.format(linked)}</b> на картата${upd}`;
+    const ol = $(mode === 'auctions' ? '#auction-results' : '#pup-results');
     ol.innerHTML = '';
     const frag = document.createDocumentFragment();
     list.slice(0, FEED_LIMIT).forEach((e) => {
@@ -1135,23 +1171,23 @@
     if (list.length > FEED_LIMIT) {
       const more = document.createElement('li');
       more.className = 'more';
-      more.textContent = `… и още ${nf.format(list.length - FEED_LIMIT)}. Стеснете периода или типа.`;
+      more.textContent = `… и още ${nf.format(list.length - FEED_LIMIT)}. Стеснете филтрите.`;
       frag.appendChild(more);
     }
     if (!list.length) {
       const li = document.createElement('li');
       li.className = 'more';
-      li.textContent = 'Няма събития по тези филтри.';
+      li.textContent = 'Нищо по тези филтри.';
       frag.appendChild(li);
     }
     ol.appendChild(frag);
-    if (state.feedMode) apply();
+    if (state.mode === mode) apply();
   }
   // Signals shown at the top of a plot's details.
   function signalsHtml(id) {
     const list = state.signalsByPlot.get(id) || [];
     if (!list.length) return '';
-    return `<div class="signals"><h3>Сигнали</h3>${list.map((e) => {
+    return `<div class="signals"><h3>Търгове и ПУП</h3>${list.map((e) => {
       if (e.kind === 'auction') {
         const a = e.a;
         return `<a class="signal auction-card" href="${esc(a.url)}" target="_blank" rel="noopener">
@@ -1525,5 +1561,5 @@
   initTools();
   initLayersPanel();
   initSheet();
-  setTab('list');
+  setTab('filters');
 })();
