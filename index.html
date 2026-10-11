@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Unbounded:wght@500;700&display=swap">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="style.css?v=22">
+  <link rel="stylesheet" href="style.css?v=24">
 </head>
 <body class="loading">
   <aside id="panel" class="sheet-half" aria-label="Панел">
@@ -52,13 +52,15 @@
         </div>
 
         <div class="group">
-          <h3>Собственик</h3>
-          <div class="chips-wrap" id="owner-list"></div>
+          <div class="group-head"><h3>Собственик</h3>
+            <span class="head-actions"><button type="button" data-all="owners">Всички</button><button type="button" data-none="owners">Изчисти</button></span></div>
+          <div class="opt-list" id="owner-list"></div>
         </div>
 
         <div class="group">
-          <h3>Състояние</h3>
-          <div class="chips-wrap" id="status-list"></div>
+          <div class="group-head"><h3>Състояние</h3>
+            <span class="head-actions"><button type="button" data-all="statuses">Всички</button><button type="button" data-none="statuses">Изчисти</button></span></div>
+          <div class="opt-list" id="status-list"></div>
           <details class="explain">
             <summary>Какво означават категориите?</summary>
             <dl id="explain-list"></dl>
@@ -120,8 +122,8 @@
         <div class="group" id="layers-section">
           <h3>Карта</h3>
           <div class="seg base" role="group" aria-label="Основа на картата">
-            <button type="button" data-base="clean" aria-pressed="true">Изчистена</button>
-            <button type="button" data-base="osm" aria-pressed="false">Подробна</button>
+            <button type="button" data-base="osm" aria-pressed="true">Подробна</button>
+            <button type="button" data-base="clean" aria-pressed="false">Изчистена</button>
             <button type="button" data-base="sat" aria-pressed="false">Сателит</button>
           </div>
           <div class="chips-wrap">
@@ -206,6 +208,6 @@
   <div id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script src="app.js?v=22"></script>
+  <script src="app.js?v=23"></script>
 </body>
 </html>

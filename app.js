@@ -136,10 +136,10 @@
   // "Изчистена": OpenStreetMap muted with a CSS filter (grey in light mode, inverted in dark) so the data stands out.
   const clean = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 20, maxNativeZoom: 19, attribution: '© OpenStreetMap', className: 'tiles-clean',
-  }).addTo(map);
+  });
   const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 20, maxNativeZoom: 19, attribution: '© OpenStreetMap',
-  });
+  }).addTo(map);
   const BASES = { clean, osm, sat: null };
   const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 20, maxNativeZoom: 19, attribution: 'Imagery © Esri',
@@ -518,11 +518,12 @@
     for (const [k, s] of Object.entries(defs)) {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = 'fchip';
+      b.className = 'opt';
       b.style.setProperty('--c', s.color);
       b.title = s.desc;
       b.setAttribute('aria-pressed', set.has(k));
-      b.innerHTML = `<i></i>${s.short || s.label}<span class="n">${nf.format(counts[k] || 0)}</span>`;
+      b.innerHTML = `<i></i><span class="opt-name">${s.short || s.label}</span><span class="n">${nf.format(counts[k] || 0)}</span>
+        <svg class="tick" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 12.5 4 4 8-9"/></svg>`;
       b.addEventListener('click', () => {
         set.has(k) ? set.delete(k) : set.add(k);
         b.setAttribute('aria-pressed', set.has(k));
@@ -588,6 +589,15 @@
     initSegments();
     renderExplain();
     document.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', () => setFilters(PRESETS[b.dataset.preset])));
+    const groups = { owners: [OWNER, '#owner-list', 'cat'], statuses: [STATUS, '#status-list', 'status'] };
+    const fill = (key, all) => {
+      const [defs, el, countKey] = groups[key];
+      state[key] = new Set(all ? Object.keys(defs) : []);
+      checklist($(el), defs, state[key], countKey);
+      apply();
+    };
+    document.querySelectorAll('[data-all]').forEach((b) => b.addEventListener('click', () => fill(b.dataset.all, true)));
+    document.querySelectorAll('[data-none]').forEach((b) => b.addEventListener('click', () => fill(b.dataset.none, false)));
     for (const id of ['#min-area', '#district', '#zone-group', '#sort']) $(id).addEventListener('change', apply);
     $('#color-by').addEventListener('change', () => { apply(); renderLegend(); });
     $('#reset-filters').addEventListener('click', () => {
