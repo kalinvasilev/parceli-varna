@@ -429,3 +429,22 @@ body.loading .map-loading { display: block; }
 .lchip:has(input:checked) { background: var(--accent); color: var(--accent-ink); border: 0; }
 .lchip:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .lchip { position: relative; }
+
+/* Търгове */
+#auction-types { margin: 8px 0 2px; }
+.results li.auction { grid-template-columns: 1fr auto; }
+.results .atype { font-weight: 600; font-size: 13.5px; }
+.results .aprice { font: 700 13.5px var(--f-data); color: var(--ink); white-space: nowrap; }
+.results li.auction .go { color: var(--faint); font-size: 18px; padding-left: 6px; }
+.source-note { color: var(--faint); font-size: 11.5px; margin: 12px 0 0; }
+.source-note a { color: var(--muted); }
+.auction-card {
+  display: grid; gap: 2px; margin: 12px 0 0; padding: 11px 13px; border-radius: 12px; text-decoration: none; color: var(--ink);
+  background: color-mix(in srgb, var(--reg) 9%, var(--panel)); border: 1px solid color-mix(in srgb, var(--reg) 35%, var(--line));
+}
+.auction-card .ac-title { font: 600 10.5px var(--f-body); letter-spacing: .07em; text-transform: uppercase; color: var(--reg); }
+.auction-card .ac-price { font: 700 19px/1.2 var(--f-display); display: flex; align-items: baseline; gap: 8px; }
+.auction-card .ac-price small { font: 400 11.5px var(--f-body); color: var(--muted); }
+.auction-card .ac-meta { font-size: 12.5px; color: var(--muted); }
+.auction-card .ac-go { margin-top: 4px; color: var(--accent); font-weight: 600; font-size: 13px; }
+.tabs button { font-size: 13px; }
