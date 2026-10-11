@@ -432,7 +432,8 @@
     const z = Math.max(map.getZoom(), zoom);
     let target = L.latLng(lat, lon);
     if (isPhone()) {
-      const pt = map.project(target, z).add([0, sheetHeight() / 2]);
+      // Centre the point between the top bar and the bottom sheet.
+      const pt = map.project(target, z).add([0, (sheetHeight() - topHeight()) / 2]);
       target = map.unproject(pt, z);
     }
     map.flyTo(target, z, { duration: 0.6 });
@@ -441,7 +442,7 @@
     if (!rows.length) return toast('Няма какво да се покаже');
     const b = L.latLngBounds(rows.map((r) => [r.lat, r.lon]));
     map.flyToBounds(b, {
-      paddingTopLeft: [40, 40], paddingBottomRight: [40, 40 + (isPhone() ? sheetHeight() : 0)],
+      paddingTopLeft: [40, 40 + (isPhone() ? topHeight() : 0)], paddingBottomRight: [40, 40 + (isPhone() ? sheetHeight() : 0)],
       maxZoom: 17, duration: 0.6,
     });
   }
@@ -672,6 +673,19 @@
     });
   }
 
+  function renderSheetTitle() {
+    const t = state.tab;
+    const n = (x) => (x ? `<span>${nf.format(x)}</span>` : '');
+    const titles = {
+      list: `Парцели${n(state.matched.length && !state.feedMode ? state.matched.length : 0)}`,
+      filters: 'Филтри',
+      feed: 'Сигнали',
+      owners: 'Фирми',
+      favs: `Любими${n(state.favs.size)}`,
+      detail: state.current ? cad(state.current) : 'Парцел',
+    };
+    $('#sheet-title').innerHTML = titles[t] || '';
+  }
   function setTab(tab) {
     const wasFavs = state.tab === 'favs';
     state.tab = tab;
@@ -685,6 +699,7 @@
     if (state.rows.length && (wasFavs || tab === 'favs')) renderDots();
     const shown = tab === 'filters' ? 'list' : tab;
     document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', b.dataset.tab === shown));
+    renderSheetTitle();
     document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + tab));
     $('.views').scrollTop = 0;
   }
@@ -733,6 +748,7 @@
     renderList();
     markPreset();
     renderFilterSummary();
+    renderSheetTitle();
     document.body.classList.remove('loading');
     if (document.querySelector('.legend')) renderLegend();
   }
@@ -1008,7 +1024,7 @@
     if (more) more.addEventListener('toggle', () => store.set('varna-plots:facts-open', more.open));
   }
 
-  // ---------- "Ново": one feed of events from every source ----------
+  // ---------- "Сигнали": one feed of events from every source ----------
   const EVENT = {
     auction: { label: 'Търг', plural: 'Търгове', color: 'var(--reg)' },
     pup_request: { label: 'Поискан ПУП', plural: 'Поискан ПУП', color: '#0f6e8c' },
@@ -1051,6 +1067,7 @@
     $('#feed-period').addEventListener('change', renderFeed);
     const recent = events.filter((e) => e.date && (Date.parse(today) - Date.parse(e.date)) / 864e5 <= 7).length;
     $('#n-feed').textContent = recent ? nf.format(recent) : '';
+    $('#n-feed').title = recent ? `${recent} за последните 7 дни` : '';
     renderFeed();
     if (state.current) renderDetail();
   }
@@ -1436,8 +1453,10 @@
     const vh = window.innerHeight;
     const peek = ($('#sheet-handle').offsetHeight || 20) + document.querySelector('#panel header').offsetHeight
       + (!$('#selbar').hidden ? $('#selbar').offsetHeight : 0);
-    return { peek: Math.min(peek, vh * 0.45), half: Math.round(vh * 0.52), full: vh - 56 };
+    const top = topHeight();
+    return { peek: Math.min(peek, vh * 0.45), half: Math.round(Math.min(vh * 0.52, vh - top - 140)), full: vh - top - 8 };
   }
+  function topHeight() { return isPhone() ? ($('#topbar').offsetHeight || 0) : 0; }
   function sheetHeight() { return isPhone() ? sheetHeights()[sheet.state] : 0; }
   function snapSheet(to) {
     sheet.state = to;
@@ -1452,6 +1471,10 @@
     $('#panel').classList.add('sheet-' + sheet.state);
   }
   function updateSheetForSelbar() { if (isPhone() && sheet.state === 'peek') applySheet(); }
+  function syncTopHeight() {
+    document.documentElement.style.setProperty('--top-h', ($('#topbar').offsetHeight || 0) + 'px');
+  }
+  if (window.ResizeObserver) new ResizeObserver(syncTopHeight).observe($('#topbar'));
   function initSheet() {
     const panel = $('#panel');
     const grab = [$('#sheet-handle'), document.querySelector('#panel header')];
@@ -1492,6 +1515,7 @@
     document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => {
       if (isPhone() && sheet.state === 'peek') snapSheet('half');
     }));
+    syncTopHeight();
     window.addEventListener('resize', () => { applySheet(); map.invalidateSize(); });
     applySheet();
   }

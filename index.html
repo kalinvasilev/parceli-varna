@@ -14,29 +14,33 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Unbounded:wght@500;700&display=swap">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="style.css?v=31">
+  <link rel="stylesheet" href="style.css?v=35">
 </head>
 <body class="loading">
+  <div id="topbar">
+    <div class="brand">
+      <h1>Парцели <span>Варна</span></h1>
+      <p class="stamp" id="stamp">КАИС · 18.09.2026</p>
+    </div>
+    <nav class="tabs" role="tablist" aria-label="Главно меню">
+      <button type="button" role="tab" data-tab="list">Парцели <span class="count" id="n-list"></span></button>
+      <button type="button" role="tab" data-tab="feed" title="Търгове и ПУП по парцелите">Сигнали <span class="count" id="n-feed"></span></button>
+      <button type="button" role="tab" data-tab="owners">Фирми</button>
+      <button type="button" role="tab" data-tab="favs">Любими <span class="count" id="n-favs"></span></button>
+    </nav>
+    <div class="search-wrap">
+      <svg class="search-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="search" type="search" placeholder="Фирма, ЕИК или идентификатор"
+        autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Търсене">
+      <div id="suggest" class="suggest" role="listbox" hidden></div>
+    </div>
+  </div>
+
   <aside id="panel" class="sheet-half" aria-label="Панел">
     <div class="sheet-handle" id="sheet-handle" aria-hidden="true"><span></span></div>
     <header>
-      <div class="brand">
-        <h1>Парцели <span>Варна</span></h1>
-        <p class="stamp" id="stamp">КАИС · 18.09.2026</p>
-      </div>
-      <div class="search-wrap">
-        <svg class="search-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-        <input id="search" type="search" placeholder="Фирма, ЕИК или идентификатор"
-          autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Търсене">
-        <div id="suggest" class="suggest" role="listbox" hidden></div>
-      </div>
+      <p class="sheet-title" id="sheet-title"></p>
       <div id="active-filter" class="active-filter" hidden></div>
-      <nav class="tabs" role="tablist">
-        <button type="button" role="tab" data-tab="list">Парцели <span class="count" id="n-list"></span></button>
-        <button type="button" role="tab" data-tab="feed">Ново <span class="count" id="n-feed"></span></button>
-        <button type="button" role="tab" data-tab="owners">Фирми</button>
-        <button type="button" role="tab" data-tab="favs" aria-label="Любими">★ <span class="count" id="n-favs"></span></button>
-      </nav>
     </header>
 
     <div class="views">
@@ -182,6 +186,7 @@
 
       <section class="view" id="view-feed" role="tabpanel">
         <div class="list-head">
+          <p class="feed-intro">Какво се случва с парцелите: публични продажби на ЧСИ, поискани и одобрени ПУП. Най-новото е най-отгоре.</p>
           <div class="chips-wrap" id="feed-types"></div>
           <div class="field">
             <label class="lchip"><input type="checkbox" id="feed-linked"><span>Само на картата</span></label>
@@ -232,6 +237,6 @@
   <div id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script src="app.js?v=31"></script>
+  <script src="app.js?v=33"></script>
 </body>
 </html>
