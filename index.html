@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="bg">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1f1f1c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Парцели Варна</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="style.css?v=12">
+</head>
+<body>
+  <aside id="panel" class="sheet-half" aria-label="Панел">
+    <div class="sheet-handle" id="sheet-handle" aria-hidden="true"><span></span></div>
+    <header>
+      <h1>Парцели Варна</h1>
+      <div class="search-wrap">
+        <input id="search" type="search" placeholder="Фирма, ЕИК, собственик или идентификатор…"
+          autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Търсене">
+        <div id="suggest" class="suggest" role="listbox" hidden></div>
+      </div>
+      <div id="active-filter" class="active-filter" hidden></div>
+      <nav class="tabs" role="tablist">
+        <button type="button" role="tab" data-tab="filters">Филтри</button>
+        <button type="button" role="tab" data-tab="list">Списък <span class="count" id="n-list"></span></button>
+        <button type="button" role="tab" data-tab="favs">★ Любими <span class="count" id="n-favs"></span></button>
+      </nav>
+    </header>
+
+    <div class="views">
+      <section class="view" id="view-filters" role="tabpanel">
+        <p class="intro">Всички 65 000 парцела в гр. Варна: собственик, зона по ОУП, ограничения и застроеност.
+          Картата и списъкът показват само това, което отговаря на филтрите.</p>
+        <div id="layers-section">
+          <h3>Карта</h3>
+          <div class="seg" role="group" aria-label="Основа на картата">
+            <button type="button" data-base="osm" aria-pressed="true">Карта</button>
+            <button type="button" data-base="sat" aria-pressed="false">Сателит</button>
+          </div>
+          <div class="layer-toggles">
+            <label class="toggle"><input type="checkbox" data-layer="zones"><span>Зони по ОУП</span></label>
+            <label class="toggle"><input type="checkbox" data-layer="restrictions"><span>Ограничения</span></label>
+            <label class="toggle"><input type="checkbox" data-layer="buildings"><span>Сгради</span></label>
+            <label class="toggle"><input type="checkbox" data-layer="cadastre"><span>Кадастър (varnamap)</span></label>
+          </div>
+        </div>
+        <h3>Собственик</h3>
+        <div class="check-list" id="owner-list"></div>
+        <h3>Състояние</h3>
+        <div class="check-list" id="status-list"></div>
+        <h3>Още</h3>
+        <div class="row">
+          <label for="min-area">Мин. площ</label>
+          <select id="min-area">
+            <option value="0">Всички</option>
+            <option value="300">300 м²</option>
+            <option value="500">500 м²</option>
+            <option value="1000">1 000 м²</option>
+            <option value="2000">2 000 м²</option>
+            <option value="5000">5 000 м²</option>
+            <option value="10000">1 ха</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="district">Район</label>
+          <select id="district"><option value="">Всички</option></select>
+        </div>
+        <div class="row">
+          <label for="zone-group">Зона по ОУП</label>
+          <select id="zone-group">
+            <option value="">Всички</option>
+            <option value="Ж">Жилищни (Ж)</option>
+            <option value="См">Смесени (Смф)</option>
+            <option value="Ц">Централни (Ц)</option>
+            <option value="О">Обществени (О)</option>
+            <option value="П">Производствени (П)</option>
+            <option value="Ок">Курортни (Ок)</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="sort">Подреди по</label>
+          <select id="sort">
+            <option value="area">Площ</option>
+            <option value="max_floor">Макс. РЗП по ОУП</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="color-by">Оцвети по</label>
+          <select id="color-by">
+            <option value="owner">Собственик</option>
+            <option value="status">Състояние</option>
+          </select>
+        </div>
+        <button type="button" class="btn wide" id="reset-filters">Върни филтрите по подразбиране</button>
+        <footer>
+          Данни: КАИС отворени данни (18.09.2026), varnamap.bg (сгради 02.2025), ОУП Варна — Приложение №1.
+          Собственици: фирми и институции по име; физическите лица — само като брой.
+          Макс. РЗП = площ × Кинт по ОУП; реалната стойност се определя с ПУП.
+        </footer>
+      </section>
+
+      <section class="view" id="view-list" role="tabpanel">
+        <div class="summary" id="summary">Зареждане…</div>
+        <div class="toolbar">
+          <button type="button" class="btn" id="fit-results">Покажи на картата</button>
+          <button type="button" class="btn" id="select-all">Избери всички</button>
+          <button type="button" class="btn" id="export-list">Експорт</button>
+        </div>
+        <ol class="results" id="results"></ol>
+      </section>
+
+      <section class="view" id="view-favs" role="tabpanel">
+        <p class="intro" id="favs-intro">Добавете парцели с ★. Любимите се пазят в този браузър.</p>
+        <div class="toolbar">
+          <button type="button" class="btn" id="fit-favs">Покажи на картата</button>
+          <button type="button" class="btn" id="export-favs">Експорт</button>
+          <button type="button" class="btn" id="share-favs">Копирай линк</button>
+          <button type="button" class="btn danger" id="clear-favs">Изчисти</button>
+        </div>
+        <ol class="results" id="fav-list"></ol>
+      </section>
+
+      <section class="view" id="view-detail" role="tabpanel">
+        <button type="button" class="back" id="detail-back">‹ Назад</button>
+        <div id="detail"></div>
+      </section>
+    </div>
+
+    <div class="selbar" id="selbar" hidden>
+      <div class="selinfo" id="selinfo"></div>
+      <div class="selactions">
+        <button type="button" class="btn" id="sel-fav">★ В любими</button>
+        <button type="button" class="btn" id="sel-fit">Покажи</button>
+        <button type="button" class="btn" id="sel-export">Експорт</button>
+        <button type="button" class="btn" id="sel-share">Линк</button>
+        <button type="button" class="btn icon" id="sel-clear" aria-label="Изчисти избора">✕</button>
+      </div>
+    </div>
+  </aside>
+
+  <main id="map" aria-label="Карта"></main>
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="app.js?v=13"></script>
+</body>
+</html>

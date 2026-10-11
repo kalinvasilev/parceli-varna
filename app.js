@@ -1,0 +1,1023 @@
+/* Парцели Варна — every plot in the city: owner, ОУП zone, restrictions, how built-up it is. */
+(() => {
+  // ---------- Definitions ----------
+  // Owner categories come from analyze_all.py (owner_category); statuses are checked in this order there.
+  const OWNER = {
+    mun_private: { label: 'Община — частна собственост', short: 'Община (частна)', desc: 'Може да се продаде или да се учреди право на строеж', color: '#0d9488', on: true },
+    mun_public: { label: 'Община — публична собственост', short: 'Община (публична)', desc: 'Не може да се продава: улици, паркове, училища…', color: '#5eead4', on: false },
+    state: { label: 'Държава', short: 'Държава', desc: 'Държавна собственост и институции', color: '#7c3aed', on: true },
+    company: { label: 'Фирма', short: 'Фирма', desc: 'Юридически лица и еднолични търговци', color: '#ea580c', on: true },
+    mixed: { label: 'Фирма + физически лица', short: 'Смесена', desc: 'Съсобственост на фирми и граждани', color: '#ca8a04', on: true },
+    person: { label: 'Физически лица', short: 'Физически лица', desc: 'Показва се само броят, без имена', color: '#94a3b8', on: false },
+    unknown: { label: 'Няма данни', short: 'Няма данни', desc: 'Без записан собственик в КАИС', color: '#d1d5db', on: false },
+  };
+  const STATUS = {
+    free: { label: 'Незастроен', desc: 'Без сгради; ОУП допуска жилища или курортно строителство; без ограничения', color: '#16a34a', on: true },
+    partial: { label: 'Частично застроен', desc: 'Има сгради, но покриват под 15% от терена', color: '#84cc16', on: true },
+    estate: { label: 'Свободен, но в жилищен комплекс', desc: 'Вероятно междублоково пространство', color: '#f59e0b', on: false },
+    built: { label: 'Застроен', desc: 'Сгради покриват 15% или повече', color: '#9ca3af', on: false },
+    public: { label: 'Улица, парк или обществен обект', desc: 'Така е записан в кадастъра', color: '#60a5fa', on: false },
+    nonres: { label: 'Зона без жилищно строителство', desc: 'Зелена, производствена, обществена, транспортна и др. по ОУП', color: '#6366f1', on: false },
+    restricted: { label: 'С ограничение', desc: 'Зона А по ЗУЧК, активно свлачище, забрана, Натура 2000', color: '#ef4444', on: false },
+    outside: { label: 'Извън урбанизирана територия', desc: 'Земеделска, горска и др. земя', color: '#a8a29e', on: false },
+  };
+  const DEFAULTS = {
+    owners: Object.keys(OWNER).filter((k) => OWNER[k].on),
+    statuses: Object.keys(STATUS).filter((k) => STATUS[k].on),
+    minArea: '500', district: '', zone: '', sort: 'area', colorBy: 'owner',
+  };
+  const ZONE_COLORS = {
+    residential: '#c8a27a', central: '#b07fc4', mixed: '#ce93d8', public: '#e57373',
+    production: '#9575cd', resort: '#ffb74d', sport: '#4fc3f7', agricultural: '#fff176',
+    infrastructure: '#bdbdbd', special: '#bdbdbd', green: '#81c784', forest: '#388e3c', protected: '#4db6ac',
+  };
+  const FLAGS = [
+    ['zone_a', 'Зона А (ЗУЧК)'], ['zone_b', 'Зона Б (ЗУЧК)', 'warn'], ['landslide', 'Активно свлачище'],
+    ['ban', 'Строителна забрана'], ['natura', 'Натура 2000'], ['protected', 'Защитена територия'],
+    ['archaeology', 'Археология', 'warn'], ['geo_warning', 'Свлачищен район: нужно инж.-геоложко проучване', 'warn'],
+  ];
+  const WMS = 'https://gis.varnamap.bg/geoserver/wms';
+  const POLY_ZOOM = 15;
+  const LIST_LIMIT = 300;
+  const MAX_DOTS = 20000;
+  const MAX_SELECT_ALL = 2000;
+  const KEY = { favs: 'varna-plots:favs:v1', filters: 'varna-plots:filters:v1' };
+
+  // ---------- Helpers ----------
+  const $ = (s) => document.querySelector(s);
+  const nf = new Intl.NumberFormat('bg-BG', { maximumFractionDigits: 0 });
+  const num = (v, unit = '') => (v === null || v === undefined || v === '' ? '—' : nf.format(v) + unit);
+  const ha = (m2) => (m2 / 10000).toLocaleString('bg-BG', { maximumFractionDigits: 1 });
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const load = (name) => fetch(`data/${name}`).then((r) => {
+    if (!r.ok) throw new Error(`${name}: ${r.status}`);
+    return r.json();
+  });
+  const store = {
+    get(key, fallback) {
+      try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
+    },
+    set(key, value) {
+      try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode: keep in memory only */ }
+    },
+  };
+  const isPhone = () => window.matchMedia('(max-width: 699px)').matches;
+  const canHover = window.matchMedia('(hover: hover)').matches;
+
+  let toastTimer;
+  function toast(msg) {
+    const t = $('#toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+  }
+
+  // Search normalisation: case, quotes and legal forms don't matter; Latin is read as Cyrillic.
+  const LEGAL = new Set(['еоод', 'оод', 'ад', 'еад', 'ет', 'кд', 'кда', 'сд', 'адсиц', 'дзз', 'дззд', 'ltd', 'llc', 'gmbh']);
+  const LAT = [['sht', 'щ'], ['sh', 'ш'], ['ch', 'ч'], ['zh', 'ж'], ['ts', 'ц'], ['yu', 'ю'], ['ya', 'я'], ['a', 'а'], ['b', 'б'],
+    ['v', 'в'], ['g', 'г'], ['d', 'д'], ['e', 'е'], ['z', 'з'], ['i', 'и'], ['j', 'й'], ['k', 'к'], ['l', 'л'], ['m', 'м'], ['n', 'н'],
+    ['o', 'о'], ['p', 'п'], ['r', 'р'], ['s', 'с'], ['t', 'т'], ['u', 'у'], ['f', 'ф'], ['h', 'х'], ['c', 'ц'], ['w', 'в'], ['y', 'й'],
+    ['q', 'к'], ['x', 'кс']];
+  function translit(s) {
+    let out = '';
+    for (let i = 0; i < s.length;) {
+      const hit = LAT.find(([l]) => s.startsWith(l, i));
+      if (hit) { out += hit[1]; i += hit[0].length; } else { out += s[i]; i += 1; }
+    }
+    return out;
+  }
+  function norm(s, keepLegal = false) {
+    const words = translit(String(s || '').toLowerCase()).replace(/[^0-9a-zа-яё]+/g, ' ').trim().split(' ');
+    return words.filter((w) => w && (keepLegal || !LEGAL.has(w))).join(' ');
+  }
+
+  // ---------- State ----------
+  const saved = store.get(KEY.filters, null);
+  const state = {
+    rows: [], byId: new Map(), rules: {}, entities: [], entitiesByPlot: new Map(),
+    matched: [], matchSet: new Set(),
+    owners: new Set(saved?.owners || DEFAULTS.owners),
+    statuses: new Set(saved?.statuses || DEFAULTS.statuses),
+    entity: null,          // {name, eik, ids:Set} when a company is chosen from search
+    text: '',              // free-text search over all plots
+    current: null,         // plot open in the detail view
+    pendingDetail: null,
+    sel: new Set(),
+    favs: new Map(Object.entries(store.get(KEY.favs, {}))),
+    markMode: false,
+    tab: 'filters',
+  };
+
+  // ---------- Map ----------
+  const map = L.map('map', { preferCanvas: true, zoomControl: !isPhone(), tap: false }).setView([43.215, 27.91], 13);
+  const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 20, maxNativeZoom: 19, attribution: '© OpenStreetMap',
+  }).addTo(map);
+  const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 20, maxNativeZoom: 19, attribution: 'Imagery © Esri',
+  });
+
+  // Only the plots pane takes clicks; zones, restrictions and cadastre tiles let them through.
+  function makePane(name, z, interactive) {
+    const p = map.createPane(name);
+    p.style.zIndex = z;
+    if (!interactive) p.style.pointerEvents = 'none';
+  }
+  makePane('zones', 405, false);
+  makePane('restrictions', 410, false);
+  makePane('cadastre', 415, false);
+  makePane('plots', 430, true);
+  const zonesCanvas = L.canvas({ pane: 'zones', padding: 0.5 });
+  const restrCanvas = L.canvas({ pane: 'restrictions', padding: 0.5 });
+  const plotsCanvas = L.canvas({ pane: 'plots', padding: 0.5, tolerance: canHover ? 2 : 8 });
+
+  const wms = (layers) => L.tileLayer.wms(WMS, {
+    layers, format: 'image/png', transparent: true, version: '1.1.1', minZoom: 15, maxZoom: 20,
+    attribution: 'varnamap.bg', pane: 'cadastre',
+  });
+  const cadastreWms = wms('varnamap:Cadastre202502_wgs');
+  const buildingsWms = wms('varnamap:Sgradi202502_wgs');
+
+  const zones = L.geoJSON(null, {
+    pane: 'zones', renderer: zonesCanvas, interactive: false,
+    style: (f) => ({
+      color: '#8a8a8a', weight: 0.4, fillOpacity: 0.3,
+      fillColor: ZONE_COLORS[state.rules[f.properties.zone]?.group] || '#e0e0e0',
+    }),
+  });
+  const overlay = (style) => L.geoJSON(null, { pane: 'restrictions', renderer: restrCanvas, interactive: false, style });
+  const restrictionParts = {
+    zone_a: overlay({ color: '#c62828', weight: 1.5, fillColor: '#e53935', fillOpacity: 0.15 }),
+    zone_b: overlay({ color: '#ef6c00', weight: 1.5, dashArray: '6 4', fill: false }),
+    geology_a: overlay({ color: '#4e342e', weight: 1, fillColor: '#6d4c41', fillOpacity: 0.2 }),
+    landslides: overlay({ color: '#3e2723', weight: 1, fillColor: '#5d4037', fillOpacity: 0.35 }),
+    ban: overlay({ color: '#000', weight: 1.5, fillColor: '#212121', fillOpacity: 0.25 }),
+    natura: overlay({ color: '#2e7d32', weight: 1.5, dashArray: '2 4', fill: false }),
+    protected: overlay({ color: '#00695c', weight: 1.5, fill: false }),
+  };
+  const restrictions = L.layerGroup(Object.values(restrictionParts));
+
+  // Plot outlines (zoom >= POLY_ZOOM, loaded per grid cell) and dots (city scale) share one canvas.
+  const plots = L.geoJSON(null, {
+    pane: 'plots', renderer: plotsCanvas,
+    style: (f) => polyStyle(f.properties.id),
+    onEachFeature: (f, layer) => {
+      layer.on('click', (e) => onPlotClick(f.properties.id, e.originalEvent));
+      if (canHover) layer.bindTooltip(() => `${f.properties.id} · ${esc(f.properties.owner)}`, { sticky: true });
+    },
+  });
+  const plotLayers = new Map();
+  const grid = { cell: 0.01, cells: {}, loaded: new Set() };
+  const dots = L.layerGroup();
+  window.__parceli = { map, plots, plotLayers, grid, state };  // for debugging in the console
+
+  const OVERLAYS = { zones, restrictions, buildings: buildingsWms, cadastre: cadastreWms };
+  L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(map);
+
+  // Tool buttons: locate me, rectangle select, mark mode, fit results.
+  const tools = L.control({ position: 'topright' });
+  tools.onAdd = () => {
+    const d = L.DomUtil.create('div', 'map-tools leaflet-control');
+    d.innerHTML = `
+      <button type="button" id="tool-layers" title="Слоеве на картата">☰</button>
+      <button type="button" id="tool-locate" title="Къде съм">◎</button>
+      <button type="button" id="tool-rect" title="Избери парцели с правоъгълник">▭</button>
+      <button type="button" id="tool-mark" title="Режим маркиране: докосване избира парцели">✓</button>
+      <button type="button" id="tool-fit" title="Покажи всички резултати">⤢</button>`;
+    L.DomEvent.disableClickPropagation(d);
+    return d;
+  };
+  tools.addTo(map);
+  const banner = L.DomUtil.create('div', 'mode-banner', map.getContainer());
+  banner.hidden = true;
+  banner.innerHTML = '<span class="mb-text"></span><button type="button" class="mb-done">Готово</button>';
+  L.DomEvent.disableClickPropagation(banner);
+  const legend = L.control({ position: 'bottomright' });
+  legend.onAdd = () => {
+    const d = L.DomUtil.create('div', 'legend' + (isPhone() ? ' closed' : ''));
+    L.DomEvent.disableClickPropagation(d);
+    return d;
+  };
+  legend.addTo(map);
+
+  const colorBy = () => $('#color-by').value;
+  const colorOf = (r) => (colorBy() === 'owner' ? OWNER[r.cat] : STATUS[r.status])?.color || '#999';
+
+  function polyStyle(id) {
+    const r = state.byId.get(id);
+    if (!r) return { color: '#9ca3af', weight: 0.5, fillOpacity: 0 };
+    const c = colorOf(r);
+    const shown = state.matchSet.has(id);
+    const s = shown
+      ? { color: c, weight: 1.2, opacity: 1, fill: true, fillColor: c, fillOpacity: 0.45, dashArray: null }
+      : { color: '#6b7280', weight: 0.9, opacity: 0.75, fill: true, fillColor: '#6b7280', fillOpacity: 0.04, dashArray: null };
+    if (state.favs.has(id)) Object.assign(s, { color: '#eab308', weight: 3, opacity: 1 });
+    if (state.sel.has(id)) Object.assign(s, { color: '#2563eb', weight: 3.5, opacity: 1, fillOpacity: Math.max(s.fillOpacity, 0.3), fillColor: shown ? c : '#2563eb' });
+    if (id === state.current) Object.assign(s, { color: '#111', weight: 4, opacity: 1, fillOpacity: 0.6, fillColor: c });
+    return s;
+  }
+  function restyle(ids) {
+    for (const id of ids) {
+      const l = plotLayers.get(id);
+      if (l) { l.setStyle(polyStyle(id)); if (id === state.current || state.sel.has(id)) l.bringToFront(); }
+    }
+  }
+
+  function renderLegend() {
+    const el = document.querySelector('.legend');
+    const src = colorBy() === 'owner' ? OWNER : STATUS;
+    el.innerHTML = `<button type="button" class="lg-toggle">${colorBy() === 'owner' ? 'Собственик' : 'Състояние'} ${el.classList.contains('closed') ? '▸' : '▾'}</button>
+      <div class="lg-body">${Object.values(src).map((s) => `<div><i style="background:${s.color}"></i>${s.short || s.label}</div>`).join('')}
+      <div><i style="border:3px solid #eab308"></i>Любим</div><div><i style="border:3px solid #2563eb"></i>Избран</div>
+      ${map.getZoom() >= POLY_ZOOM ? '<div><i style="border:1px solid #6b7280"></i>Извън филтъра (кликва се)</div>' : ''}</div>`;
+    el.querySelector('.lg-toggle').onclick = () => { el.classList.toggle('closed'); renderLegend(); };
+  }
+
+  function syncZoomLayers() {
+    if (map.getZoom() >= POLY_ZOOM) {
+      if (map.hasLayer(dots)) map.removeLayer(dots);
+      if (!map.hasLayer(plots)) plots.addTo(map);
+      loadVisibleCells();
+    } else {
+      if (map.hasLayer(plots)) map.removeLayer(plots);
+      if (!map.hasLayer(dots)) dots.addTo(map);
+    }
+    renderLegend();
+  }
+  map.on('zoomend moveend', syncZoomLayers);
+
+  function loadVisibleCells() {
+    const b = map.getBounds().pad(0.2);
+    const c = grid.cell;
+    for (let i = Math.floor(b.getWest() / c); i <= Math.floor(b.getEast() / c); i++) {
+      for (let j = Math.floor(b.getSouth() / c); j <= Math.floor(b.getNorth() / c); j++) {
+        const key = `${i}_${j}`;
+        if (!grid.cells[key] || grid.loaded.has(key)) continue;
+        grid.loaded.add(key);
+        load(`grid/${key}.json`).then((fc) => {
+          plots.addData(fc);
+          plots.eachLayer((l) => plotLayers.set(l.feature.properties.id, l));
+          restyle([...state.sel, state.current].filter(Boolean));
+          if (state.pendingDetail && plotLayers.has(state.pendingDetail) && state.pendingDetail === state.current) {
+            state.pendingDetail = null;
+            renderDetail();
+          }
+        }).catch(() => grid.loaded.delete(key));
+      }
+    }
+  }
+
+  // Bring a point into view; on phones keep it in the part of the map above the bottom sheet.
+  function focusOn(lat, lon, zoom) {
+    const z = Math.max(map.getZoom(), zoom);
+    let target = L.latLng(lat, lon);
+    if (isPhone()) {
+      const pt = map.project(target, z).add([0, sheetHeight() / 2]);
+      target = map.unproject(pt, z);
+    }
+    map.flyTo(target, z, { duration: 0.6 });
+  }
+  function fitRows(rows) {
+    if (!rows.length) return toast('Няма какво да се покаже');
+    const b = L.latLngBounds(rows.map((r) => [r.lat, r.lon]));
+    map.flyToBounds(b, {
+      paddingTopLeft: [40, 40], paddingBottomRight: [40, 40 + (isPhone() ? sheetHeight() : 0)],
+      maxZoom: 17, duration: 0.6,
+    });
+  }
+
+  // ---------- Data ----------
+  Promise.all([load('zone_rules.json'), load('plot_index.json'), load('grid/index.json'), load('entities.json')])
+    .then(([rules, idx, g, ent]) => {
+      state.rules = rules;
+      grid.cell = g.cell;
+      grid.cells = g.cells;
+      state.rows = idx.rows.map((r) => {
+        const cat = idx.cats[r[5]];
+        const owner = typeof r[8] === 'string' ? r[8]
+          : cat === 'unknown' ? 'няма данни' : r[8] > 1 ? `${r[8]} физически лица` : 'физическо лице';
+        const id = idx.prefix + r[0];
+        return {
+          id, area: r[1], district: idx.districts[r[2]], zone: r[3], status: idx.statuses[r[4]], cat,
+          max_floor: r[6], built: r[7], owner, lat: r[9], lon: r[10], qn: norm(owner, true),
+        };
+      });
+      state.rows.forEach((r) => state.byId.set(r.id, r));
+      state.entities = ent.entities.map(([name, eik, kind, aliases, ids], i) => {
+        const full = ids.map((s) => ent.prefix + s);
+        const area = full.reduce((s, id) => s + (state.byId.get(id)?.area || 0), 0);
+        const e = { i, name, eik, kind: ent.kinds[kind], aliases, ids: full, area, qn: norm(name + ' ' + aliases), qnFull: norm(name, true) };
+        full.forEach((id) => {
+          if (!state.entitiesByPlot.has(id)) state.entitiesByPlot.set(id, []);
+          state.entitiesByPlot.get(id).push(e);
+        });
+        return e;
+      });
+      buildControls(idx.districts);
+      apply();
+      openFromHash();
+      syncZoomLayers();
+      renderFavs();
+      load('oup.geojson').then((d) => zones.addData(d));
+      for (const k of Object.keys(restrictionParts)) load(`${k}.geojson`).then((d) => restrictionParts[k].addData(d));
+    })
+    .catch((err) => {
+      $('#summary').textContent = 'Грешка при зареждане на данните: ' + err.message;
+      setTab('list');
+    });
+
+  function openFromHash() {
+    const h = new URLSearchParams(location.hash.slice(1));
+    const ids = (h.get('ids') || '').split(',').filter(Boolean).map((s) => (s.includes('.') && s.startsWith('10135') ? s : '10135.' + s));
+    const valid = ids.filter((id) => state.byId.has(id));
+    if (valid.length) {
+      valid.forEach((id) => state.sel.add(id));
+      renderSelection();
+      fitRows(valid.map((id) => state.byId.get(id)));
+      toast(`Отворен споделен списък: ${valid.length} парцела`);
+      return;
+    }
+    const one = h.get('id');
+    if (one && state.byId.has(one)) openDetail(one, true);
+    else setTab(isPhone() ? 'list' : 'filters');
+  }
+
+  // ---------- Controls ----------
+  function checklist(el, defs, set, countKey) {
+    const counts = {};
+    state.rows.forEach((r) => { counts[r[countKey]] = (counts[r[countKey]] || 0) + 1; });
+    el.innerHTML = '';
+    for (const [k, s] of Object.entries(defs)) {
+      const row = document.createElement('label');
+      row.className = 'check-row';
+      row.style.setProperty('--c', s.color);
+      row.innerHTML = `<input type="checkbox" ${set.has(k) ? 'checked' : ''}>
+        <span class="swatch"></span>
+        <span class="text"><span class="name">${s.label}</span><span class="desc">${s.desc}</span></span>
+        <span class="n">${nf.format(counts[k] || 0)}</span>`;
+      row.querySelector('input').addEventListener('change', (e) => {
+        e.target.checked ? set.add(k) : set.delete(k);
+        apply();
+      });
+      el.appendChild(row);
+    }
+  }
+
+  function buildControls(districts) {
+    checklist($('#owner-list'), OWNER, state.owners, 'cat');
+    checklist($('#status-list'), STATUS, state.statuses, 'status');
+    const sel = $('#district');
+    districts.filter(Boolean).sort().forEach((d) => sel.add(new Option(d, d)));
+    const f = saved || DEFAULTS;
+    $('#min-area').value = f.minArea ?? DEFAULTS.minArea;
+    $('#district').value = f.district ?? '';
+    $('#zone-group').value = f.zone ?? '';
+    $('#sort').value = f.sort ?? DEFAULTS.sort;
+    $('#color-by').value = f.colorBy ?? DEFAULTS.colorBy;
+    for (const id of ['#min-area', '#district', '#zone-group', '#sort']) $(id).addEventListener('change', apply);
+    $('#color-by').addEventListener('change', () => { apply(); renderLegend(); });
+    $('#reset-filters').addEventListener('click', () => {
+      state.owners = new Set(DEFAULTS.owners);
+      state.statuses = new Set(DEFAULTS.statuses);
+      checklist($('#owner-list'), OWNER, state.owners, 'cat');
+      checklist($('#status-list'), STATUS, state.statuses, 'status');
+      $('#min-area').value = DEFAULTS.minArea; $('#district').value = ''; $('#zone-group').value = '';
+      $('#sort').value = DEFAULTS.sort; $('#color-by').value = DEFAULTS.colorBy;
+      apply(); renderLegend();
+      toast('Филтрите са върнати по подразбиране');
+    });
+
+    document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
+    $('#detail-back').addEventListener('click', closeDetail);
+    $('#fit-results').addEventListener('click', () => { fitRows(state.matched.slice(0, MAX_DOTS)); });
+    $('#select-all').addEventListener('click', () => {
+      const take = state.matched.slice(0, MAX_SELECT_ALL);
+      take.forEach((r) => state.sel.add(r.id));
+      renderSelection();
+      toast(state.matched.length > MAX_SELECT_ALL ? `Избрани първите ${nf.format(MAX_SELECT_ALL)}` : `Избрани ${nf.format(take.length)}`);
+    });
+    $('#export-list').addEventListener('click', () => exportCsv(state.matched, 'spisak'));
+    $('#fit-favs').addEventListener('click', () => fitRows(favRows()));
+    $('#export-favs').addEventListener('click', () => exportCsv(favRows(), 'lyubimi'));
+    $('#share-favs').addEventListener('click', () => shareLink([...state.favs.keys()]));
+    $('#clear-favs').addEventListener('click', () => {
+      if (!state.favs.size || !confirm(`Да се изтрият ли всички ${state.favs.size} любими?`)) return;
+      const ids = [...state.favs.keys()];
+      state.favs.clear(); saveFavs(); restyle(ids); renderFavs(); renderDots(); refreshListMarks();
+    });
+    $('#sel-fav').addEventListener('click', () => {
+      let n = 0;
+      state.sel.forEach((id) => { if (!state.favs.has(id)) { state.favs.set(id, { t: Date.now(), note: '' }); n++; } });
+      saveFavs(); renderFavs(); restyle(state.sel); renderDots(); refreshListMarks();
+      toast(n ? `Добавени в любими: ${n}` : 'Всички вече са в любими');
+    });
+    $('#sel-fit').addEventListener('click', () => fitRows([...state.sel].map((id) => state.byId.get(id))));
+    $('#sel-export').addEventListener('click', () => exportCsv([...state.sel].map((id) => state.byId.get(id)), 'izbrani'));
+    $('#sel-share').addEventListener('click', () => shareLink([...state.sel]));
+    $('#sel-clear').addEventListener('click', () => { const ids = [...state.sel]; state.sel.clear(); restyle(ids); renderSelection(); });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === '/' && document.activeElement !== $('#search')) { e.preventDefault(); $('#search').focus(); }
+      if (e.key === 'Escape') {
+        if (!$('#suggest').hidden) hideSuggest();
+        else if (state.current) closeDetail();
+        else if (rect.active) stopRect();
+      }
+    });
+  }
+
+  function setTab(tab) {
+    state.tab = tab;
+    document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', b.dataset.tab === tab));
+    document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + tab));
+    $('.views').scrollTop = 0;
+  }
+
+  function saveFilters() {
+    store.set(KEY.filters, {
+      owners: [...state.owners], statuses: [...state.statuses], minArea: $('#min-area').value,
+      district: $('#district').value, zone: $('#zone-group').value, sort: $('#sort').value, colorBy: $('#color-by').value,
+    });
+  }
+
+  // ---------- Filtering ----------
+  function apply() {
+    const minArea = +$('#min-area').value;
+    const district = $('#district').value;
+    const zg = $('#zone-group').value;
+    const sort = $('#sort').value;
+    let list;
+    if (state.entity) {
+      list = state.entity.ids.map((id) => state.byId.get(id)).filter(Boolean);
+    } else if (state.text) {
+      const tokens = norm(state.text, true).split(' ').filter(Boolean);
+      list = state.rows.filter((r) => r.id.includes(state.text) || (tokens.length && tokens.every((t) => r.qn.includes(t))));
+    } else {
+      list = state.rows.filter((r) => state.owners.has(r.cat) && state.statuses.has(r.status) && r.area >= minArea
+        && (!district || r.district === district) && (!zg || (r.zone || '').startsWith(zg)));
+    }
+    list.sort((a, b) => (b[sort] || 0) - (a[sort] || 0));
+    state.matched = list;
+    state.matchSet = new Set(list.map((r) => r.id));
+    saveFilters();
+
+    renderDots();
+    plots.eachLayer((l) => l.setStyle(polyStyle(l.feature.properties.id)));
+    renderActiveFilter();
+    renderSummary();
+    renderList();
+  }
+
+  function renderDots() {
+    dots.clearLayers();
+    const extra = [...state.favs.keys(), ...state.sel].filter((id) => !state.matchSet.has(id)).map((id) => state.byId.get(id)).filter(Boolean);
+    const list = state.matched.slice(0, MAX_DOTS).concat(extra);
+    for (const r of list) {
+      const fav = state.favs.has(r.id);
+      const sel = state.sel.has(r.id);
+      const m = L.circleMarker([r.lat, r.lon], {
+        renderer: plotsCanvas, pane: 'plots',
+        radius: Math.max(3, Math.min(9, Math.sqrt(r.area) / 12)) + (fav || sel ? 2 : 0),
+        weight: sel || fav ? 2.5 : 0.8, color: sel ? '#2563eb' : fav ? '#eab308' : '#fff', opacity: 0.95,
+        fillColor: colorOf(r), fillOpacity: state.matchSet.has(r.id) ? 0.85 : 0.35,
+      }).on('click', (e) => onPlotClick(r.id, e.originalEvent));
+      if (canHover) m.bindTooltip(`${r.id} · ${num(r.area, ' м²')}<br>${esc(r.owner)}`);
+      m.addTo(dots);
+    }
+  }
+
+  function renderActiveFilter() {
+    const el = $('#active-filter');
+    if (!state.entity && !state.text) { el.hidden = true; return; }
+    el.hidden = false;
+    const n = state.matched.length;
+    const total = state.matched.reduce((s, r) => s + (r.area || 0), 0);
+    el.innerHTML = state.entity
+      ? `<div class="af-text"><b>${esc(state.entity.name)}</b><span>${state.entity.eik ? 'ЕИК ' + esc(state.entity.eik) + ' · ' : ''}${nf.format(n)} парцела · ${ha(total)} ха</span></div>`
+      : `<div class="af-text"><b>Търсене: „${esc(state.text)}“</b><span>${nf.format(n)} парцела · ${ha(total)} ха</span></div>`;
+    const x = document.createElement('button');
+    x.type = 'button'; x.className = 'btn icon'; x.textContent = '✕'; x.setAttribute('aria-label', 'Махни търсенето');
+    x.onclick = clearSearch;
+    el.appendChild(x);
+  }
+
+  function renderSummary() {
+    const list = state.matched;
+    const total = list.reduce((s, r) => s + (r.area || 0), 0);
+    $('#n-list').textContent = list.length ? nf.format(list.length) : '';
+    $('#summary').innerHTML = list.length
+      ? `<b>${nf.format(list.length)}</b> парцела · <b>${ha(total)}</b> ха${state.entity || state.text ? ' · филтрите не важат при търсене' : ''}`
+        + (list.length > MAX_DOTS ? `<br>На картата: най-големите ${nf.format(MAX_DOTS)}.` : '')
+      : (state.entity || state.text ? 'Нищо не е намерено.' : 'Няма парцели по тези филтри. Отметнете още собственици или състояния.');
+  }
+
+  // ---------- Lists ----------
+  function rowHtml(r, withNote) {
+    const fav = state.favs.get(r.id);
+    const st = STATUS[r.status];
+    return `<input type="checkbox" class="pick" ${state.sel.has(r.id) ? 'checked' : ''} aria-label="Избери ${r.id}">
+      <div class="main">
+        <div class="line1"><span class="id"><i style="--c:${colorOf(r)}"></i>${r.id}</span><span class="area">${num(r.area, ' м²')}</span></div>
+        <div class="owner">${esc(r.owner)}</div>
+        <div class="chips">
+          <span class="chip-s" style="--c:${st.color}">${st.label}</span>
+          ${r.zone ? `<span class="chip-s plain">${esc(r.zone)}</span>` : ''}
+          ${r.district ? `<span class="chip-s plain">${esc(r.district)}</span>` : ''}
+          ${r.max_floor ? `<span class="chip-s plain">РЗП до ${num(r.max_floor, ' м²')}</span>` : ''}
+        </div>
+        ${withNote && fav?.note ? `<div class="note-line">${esc(fav.note)}</div>` : ''}
+      </div>
+      <button type="button" class="star ${fav ? 'on' : ''}" aria-label="Любим">${fav ? '★' : '☆'}</button>`;
+  }
+  function bindRow(li, r) {
+    li.addEventListener('click', (e) => {
+      if (e.target.closest('.pick')) { toggleSel(r.id, e.target.checked); return; }
+      if (e.target.closest('.star')) { toggleFav(r.id); return; }
+      onPlotClick(r.id, e, true);
+    });
+  }
+  function renderList() {
+    const ol = $('#results');
+    ol.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    state.matched.slice(0, LIST_LIMIT).forEach((r) => {
+      const li = document.createElement('li');
+      li.dataset.id = r.id;
+      li.innerHTML = rowHtml(r, false);
+      li.classList.toggle('sel', state.sel.has(r.id));
+      li.classList.toggle('current', r.id === state.current);
+      bindRow(li, r);
+      frag.appendChild(li);
+    });
+    if (state.matched.length > LIST_LIMIT) {
+      const more = document.createElement('li');
+      more.className = 'more';
+      more.textContent = `… и още ${nf.format(state.matched.length - LIST_LIMIT)}. Стеснете филтрите или използвайте „Експорт“.`;
+      frag.appendChild(more);
+    }
+    ol.appendChild(frag);
+  }
+  function refreshListMarks() {
+    document.querySelectorAll('.results li[data-id]').forEach((li) => {
+      const id = li.dataset.id;
+      li.classList.toggle('sel', state.sel.has(id));
+      li.classList.toggle('current', id === state.current);
+      const pick = li.querySelector('.pick');
+      if (pick) pick.checked = state.sel.has(id);
+      const star = li.querySelector('.star');
+      if (star) { const on = state.favs.has(id); star.classList.toggle('on', on); star.textContent = on ? '★' : '☆'; }
+    });
+  }
+
+  // ---------- Favourites ----------
+  const favRows = () => [...state.favs.keys()].map((id) => state.byId.get(id)).filter(Boolean);
+  function saveFavs() { store.set(KEY.favs, Object.fromEntries(state.favs)); }
+  function toggleFav(id) {
+    if (state.favs.has(id)) { state.favs.delete(id); toast('Премахнат от любими'); }
+    else { state.favs.set(id, { t: Date.now(), note: '' }); toast('Добавен в любими'); }
+    saveFavs(); restyle([id]); renderDots(); renderFavs(); refreshListMarks();
+    if (state.current === id) renderDetail();
+  }
+  function renderFavs() {
+    const rows = favRows().sort((a, b) => (state.favs.get(b.id).t || 0) - (state.favs.get(a.id).t || 0));
+    $('#n-favs').textContent = rows.length ? nf.format(rows.length) : '';
+    const total = rows.reduce((s, r) => s + (r.area || 0), 0);
+    $('#favs-intro').textContent = rows.length
+      ? `${nf.format(rows.length)} любими · ${ha(total)} ха. Пазят се в този браузър; „Копирай линк“ ги праща на друг.`
+      : 'Добавете парцели с ☆. Любимите се пазят в този браузър.';
+    const ol = $('#fav-list');
+    ol.innerHTML = '';
+    rows.forEach((r) => {
+      const li = document.createElement('li');
+      li.dataset.id = r.id;
+      li.innerHTML = rowHtml(r, true);
+      li.classList.toggle('sel', state.sel.has(r.id));
+      bindRow(li, r);
+      ol.appendChild(li);
+    });
+  }
+
+  // ---------- Selection ----------
+  function toggleSel(id, on) {
+    const want = on ?? !state.sel.has(id);
+    want ? state.sel.add(id) : state.sel.delete(id);
+    restyle([id]);
+    renderSelection();
+  }
+  function renderSelection() {
+    const bar = $('#selbar');
+    const rows = [...state.sel].map((id) => state.byId.get(id)).filter(Boolean);
+    document.body.classList.toggle('selecting', state.markMode || state.sel.size > 0);
+    bar.hidden = !rows.length;
+    if (rows.length) {
+      const area = rows.reduce((s, r) => s + (r.area || 0), 0);
+      const floor = rows.reduce((s, r) => s + (r.max_floor || 0), 0);
+      const owners = new Set(rows.map((r) => r.owner)).size;
+      $('#selinfo').innerHTML = `<b>${nf.format(rows.length)} избрани</b> · ${num(area, ' м²')}${floor ? ' · макс. РЗП ' + num(floor, ' м²') : ''} · ${nf.format(owners)} ${owners === 1 ? 'собственик' : 'собственика'}`;
+    }
+    renderDots();
+    refreshListMarks();
+    restyle(rows.map((r) => r.id));
+    if (state.current) renderDetail();
+    updateSheetForSelbar();
+  }
+
+  // ---------- Click handling ----------
+  function onPlotClick(id, ev, fromList) {
+    if (Date.now() - rect.endedAt < 400) return;  // the click that ends a rectangle selection
+    const multi = ev && (ev.shiftKey || ev.metaKey || ev.ctrlKey);
+    if (state.markMode || multi) { toggleSel(id); return; }
+    openDetail(id, fromList || map.getZoom() < POLY_ZOOM);
+  }
+
+  // ---------- Detail ----------
+  function openDetail(id, fly) {
+    const r = state.byId.get(id);
+    if (!r) return;
+    const prev = state.current;
+    state.current = id;
+    history.replaceState(null, '', '#id=' + encodeURIComponent(id));
+    restyle([prev, id].filter(Boolean));
+    refreshListMarks();
+    if (fly) focusOn(r.lat, r.lon, 17);
+    if (!plotLayers.has(id)) state.pendingDetail = id;
+    renderDetail();
+    setTab('detail');
+    if (isPhone() && sheet.state === 'peek') snapSheet('half');
+  }
+  function closeDetail() {
+    const id = state.current;
+    state.current = null;
+    history.replaceState(null, '', location.pathname + location.search);
+    restyle([id]);
+    refreshListMarks();
+    setTab(state.entity || state.text ? 'list' : (state.lastTab || 'list'));
+  }
+  document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => { state.lastTab = b.dataset.tab; }));
+
+  function renderDetail() {
+    const id = state.current;
+    const r = state.byId.get(id);
+    if (!r) return;
+    const l = plotLayers.get(id);
+    const p = l ? l.feature.properties : null;
+    const o = OWNER[r.cat] || OWNER.unknown;
+    const s = STATUS[r.status];
+    const fav = state.favs.get(id);
+    const sel = state.sel.has(id);
+    const ents = state.entitiesByPlot.get(id) || [];
+    let body = '';
+    if (p) {
+      const eiks = (p.eiks || '').split(' | ').filter(Boolean);
+      const alt = p.alt_rule || '';
+      const altApplies = alt && !(alt.startsWith('Зона Б') && !p.zone_b) && !(alt.startsWith('Зона А') && !p.zone_a);
+      const notes = [];
+      if (p.status === 'estate') notes.push('Терен в жилищен комплекс: вероятно междублоково пространство. ОУП предвижда незастроените части да станат озеленени площи. Проверете ортофото и ПУП.');
+      if (p.zone === 'Жм2') notes.push('Показателите за Жм2 не са в Приложение 1 — проверете специфичните правила.');
+      if (p.owner_cat === 'mun_public') notes.push('Публична общинска собственост не може да се продава, освен ако общината не я обяви за частна.');
+      const facts = [
+        ['Собственик', esc(p.owner)],
+        eiks.length && !ents.length ? ['ЕИК', eiks.map(esc).join('<br>')] : null,
+        ['Вид собственост', esc(p.prop || '—')],
+        ['Площ', num(p.area, ' м²')],
+        ['Район', esc((p.district || '—').replace(/^район /, ''))],
+        ['По кадастър', esc(p.use_type || '—')],
+        ['Зона по ОУП', p.zone ? `${esc(p.zone)}${p.zone_name ? ' — ' + esc(p.zone_name) : ''}` : '—'],
+        p.kint ? ['Макс. плътност / Кинт', `${p.density ?? '—'}% / ${p.kint}`] : null,
+        p.cornice ? ['Макс. корниз', p.cornice + ' м'] : null,
+        p.max_floor ? ['Макс. РЗП (горна граница)', num(p.max_floor, ' м²')] : null,
+        ['Застроеност', `${p.built ?? 0}% (${p.n_buildings || 0} сгр.${p.max_floors ? `, до ${p.max_floors} ет.` : ''})`],
+      ].filter(Boolean);
+      const flags = FLAGS.filter(([k]) => p[k]);
+      body = `<p class="addr">${esc(p.address || '')}</p>
+        <dl class="facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
+        <div class="flags">${flags.length ? flags.map(([, t, cls]) => `<span class="flag ${cls || ''}">${t}</span>`).join('') : '<span class="flag ok">Без открити ограничения</span>'}</div>
+        ${notes.map((n) => `<p class="note">${n}</p>`).join('')}
+        ${altApplies ? `<p class="alt">Допълнително: ${esc(alt)}</p>` : ''}`;
+    } else {
+      body = `<dl class="facts"><dt>Собственик</dt><dd>${esc(r.owner)}</dd><dt>Площ</dt><dd>${num(r.area, ' м²')}</dd>
+        <dt>Зона по ОУП</dt><dd>${esc(r.zone || '—')}</dd></dl><p class="loading">Зареждане на подробностите…</p>`;
+    }
+    const ownersHtml = ents.length ? `<h3>Собственици — всички техни парцели</h3><ul class="owners-list">${ents.map((e) => `
+      <li><button type="button" data-ent="${e.i}"><span>${esc(e.name)}${e.eik ? `<br><small class="muted">ЕИК ${esc(e.eik)}</small>` : ''}</span>
+      <span>${nf.format(e.ids.length)} парц. ›</span></button></li>`).join('')}</ul>` : '';
+    $('#detail').innerHTML = `<div class="detail">
+      <span class="badge" style="--c:${o.color}">${o.short}</span><span class="badge" style="--c:${s.color}">${s.label}</span>
+      <h2>${esc(id)}</h2>
+      <div class="actions">
+        <button type="button" class="btn ${fav ? 'fav-on' : ''}" data-act="fav">${fav ? '★ В любими' : '☆ Любим'}</button>
+        <button type="button" class="btn ${sel ? 'sel-on' : ''}" data-act="sel">${sel ? '✓ Избран' : 'Избери'}</button>
+        <a class="btn" href="https://www.google.com/maps?q=${r.lat},${r.lon}" target="_blank" rel="noopener">Google Maps</a>
+        <a class="btn" href="https://kais.cadastre.bg/bg/Map" target="_blank" rel="noopener">КАИС</a>
+        <button type="button" class="btn" data-act="copy">Копирай ID</button>
+        <button type="button" class="btn" data-act="link">Линк</button>
+      </div>
+      ${fav ? `<textarea class="fav-note" placeholder="Бележка (пази се с любимите)…">${esc(fav.note || '')}</textarea>` : ''}
+      ${body}
+      ${ownersHtml}
+    </div>`;
+    const d = $('#detail');
+    d.querySelector('[data-act=fav]').onclick = () => toggleFav(id);
+    d.querySelector('[data-act=sel]').onclick = () => toggleSel(id);
+    d.querySelector('[data-act=copy]').onclick = () => copy(id, 'ID е копиран');
+    d.querySelector('[data-act=link]').onclick = () => copy(location.origin + location.pathname + '#id=' + id, 'Линкът е копиран');
+    const note = d.querySelector('.fav-note');
+    if (note) note.oninput = () => { const f = state.favs.get(id); if (f) { f.note = note.value; saveFavs(); } };
+    d.querySelectorAll('[data-ent]').forEach((b) => { b.onclick = () => chooseEntity(state.entities[+b.dataset.ent]); });
+  }
+
+  // ---------- Search ----------
+  const sug = { items: [], hl: -1 };
+  function initSearch() {
+    const input = $('#search');
+    let t;
+    input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => suggest(input.value), 120); });
+    input.addEventListener('focus', () => { if (input.value.trim()) suggest(input.value); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!sug.items.length) return;
+        sug.hl = (sug.hl + (e.key === 'ArrowDown' ? 1 : -1) + sug.items.length) % sug.items.length;
+        document.querySelectorAll('#suggest button').forEach((b, i) => b.classList.toggle('hl', i === sug.hl));
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const pick = sug.items[Math.max(sug.hl, 0)];
+        if (pick && (sug.hl >= 0 || pick.kind === 'entity')) pick.go();
+        else if (input.value.trim()) { state.text = input.value.trim(); state.entity = null; hideSuggest(); apply(); setTab('list'); }
+      }
+    });
+    document.addEventListener('pointerdown', (e) => { if (!e.target.closest('.search-wrap')) hideSuggest(); });
+  }
+  function hideSuggest() { $('#suggest').hidden = true; sug.hl = -1; }
+
+  function findEntities(q) {
+    const digits = q.replace(/\D/g, '');
+    if (digits.length >= 4 && digits.length === q.replace(/\s/g, '').length) {
+      return state.entities.filter((e) => e.eik && e.eik.startsWith(digits)).slice(0, 8);
+    }
+    const tokens = norm(q).split(' ').filter(Boolean);
+    if (!tokens.length) return [];
+    const scored = [];
+    for (const e of state.entities) {
+      if (!tokens.every((t) => e.qn.includes(t))) continue;
+      let score = Math.log(1 + e.ids.length);
+      if (e.qn.startsWith(tokens[0])) score += 4;
+      if (tokens.every((t) => (' ' + e.qn).includes(' ' + t))) score += 2;
+      scored.push([score, e]);
+    }
+    return scored.sort((a, b) => b[0] - a[0]).slice(0, 8).map((x) => x[1]);
+  }
+  function highlight(name, q) {
+    const tokens = norm(q).split(' ').filter((t) => t.length > 1);
+    let out = esc(name);
+    for (const t of tokens) {
+      const i = norm(name, true).indexOf(t);
+      if (i < 0) continue;
+      // Highlight by searching the raw name case-insensitively for the Cyrillic token.
+      const re = new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      out = out.replace(re, (m) => `<mark>${m}</mark>`);
+    }
+    return out;
+  }
+  function suggest(raw) {
+    const q = raw.trim();
+    const box = $('#suggest');
+    sug.items = [];
+    sug.hl = -1;
+    if (q.length < 2) { box.hidden = true; return; }
+    const ents = findEntities(q);
+    const plotHits = /\d/.test(q) ? state.rows.filter((r) => r.id.includes(q)).slice(0, 5) : [];
+    let html = '';
+    if (ents.length) {
+      html += '<h4>Собственици</h4>';
+      ents.forEach((e) => {
+        sug.items.push({ kind: 'entity', go: () => chooseEntity(e) });
+        html += `<button type="button" role="option"><span class="s-name">${highlight(e.name, q)}</span>
+          <span class="s-n">${nf.format(e.ids.length)} парц.</span>
+          <span class="s-meta">${e.eik ? 'ЕИК ' + esc(e.eik) + ' · ' : ''}${esc(e.kind)} · ${ha(e.area)} ха</span></button>`;
+      });
+    }
+    if (plotHits.length) {
+      html += '<h4>Парцели</h4>';
+      plotHits.forEach((r) => {
+        sug.items.push({ kind: 'plot', go: () => { hideSuggest(); openDetail(r.id, true); } });
+        html += `<button type="button" role="option"><span class="s-name">${esc(r.id)}</span><span class="s-n">${num(r.area, ' м²')}</span>
+          <span class="s-meta">${esc(r.owner)}</span></button>`;
+      });
+    }
+    sug.items.push({ kind: 'text', go: () => { state.text = q; state.entity = null; hideSuggest(); apply(); setTab('list'); } });
+    html += `<h4>Всички парцели</h4><button type="button" role="option"><span class="s-name">Търси „${esc(q)}“ в собствениците</span><span class="s-n">Enter</span></button>`;
+    box.innerHTML = html;
+    box.querySelectorAll('button').forEach((b, i) => b.addEventListener('click', () => sug.items[i].go()));
+    box.hidden = false;
+  }
+  function chooseEntity(e) {
+    hideSuggest();
+    state.entity = e;
+    state.text = '';
+    $('#search').value = e.name;
+    apply();
+    setTab('list');
+    fitRows(state.matched);
+  }
+  function clearSearch() {
+    state.entity = null;
+    state.text = '';
+    $('#search').value = '';
+    apply();
+  }
+
+  // ---------- Export and sharing ----------
+  function exportCsv(rows, name) {
+    if (!rows.length) return toast('Няма какво да се експортира');
+    const head = ['Идентификатор', 'Площ м²', 'Район', 'Зона ОУП', 'Състояние', 'Вид собственик', 'Собственик',
+      'Макс. РЗП м²', 'Застроеност %', 'Бележка', 'Google Maps'];
+    const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = rows.map((r) => [r.id, r.area, r.district, r.zone, STATUS[r.status].label, OWNER[r.cat].short, r.owner,
+      r.max_floor || '', r.built, state.favs.get(r.id)?.note || '', `https://www.google.com/maps?q=${r.lat},${r.lon}`].map(cell).join(';'));
+    const blob = new Blob(['﻿' + [head.map(cell).join(';'), ...lines].join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `parceli-varna-${name}-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    toast(`Експортирани ${nf.format(rows.length)} парцела`);
+  }
+  function shareLink(ids) {
+    if (!ids.length) return toast('Няма парцели за споделяне');
+    const short = ids.map((id) => id.replace(/^10135\./, ''));
+    copy(`${location.origin}${location.pathname}#ids=${short.join(',')}`, `Линк към ${ids.length} парцела е копиран`);
+  }
+  function copy(text, msg) {
+    const done = () => toast(msg);
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done, () => prompt('Копирайте:', text));
+    else prompt('Копирайте:', text);
+  }
+
+  // ---------- Map tools ----------
+  const rect = { active: false, start: null, shape: null, endedAt: 0 };
+  function setHint(text) {
+    banner.hidden = !text;
+    banner.querySelector('.mb-text').textContent = text || '';
+    document.body.classList.toggle('selecting', state.markMode || state.sel.size > 0);
+  }
+  banner.querySelector('.mb-done').onclick = () => {
+    if (rect.active) stopRect();
+    if (state.markMode) $('#tool-mark').click();
+    setHint('');
+  };
+  function initLayersPanel() {
+    document.querySelectorAll('[data-base]').forEach((b) => {
+      b.onclick = () => {
+        const satOn = b.dataset.base === 'sat';
+        (satOn ? osm : sat).remove();
+        (satOn ? sat : osm).addTo(map);
+        document.querySelectorAll('[data-base]').forEach((x) => x.setAttribute('aria-pressed', x === b));
+      };
+    });
+    document.querySelectorAll('[data-layer]').forEach((cb) => {
+      cb.onchange = () => (cb.checked ? OVERLAYS[cb.dataset.layer].addTo(map) : OVERLAYS[cb.dataset.layer].remove());
+    });
+    $('#tool-layers').onclick = () => {
+      setTab('filters');
+      if (isPhone() && sheet.state !== 'full') snapSheet('half');
+      $('#layers-section').scrollIntoView({ block: 'start' });
+    };
+  }
+  function initTools() {
+    $('#tool-locate').onclick = () => {
+      map.locate({ setView: false, enableHighAccuracy: true });
+      toast('Търсене на местоположението…');
+    };
+    let me;
+    map.on('locationfound', (e) => {
+      if (me) me.remove();
+      me = L.circleMarker(e.latlng, { radius: 8, color: '#fff', weight: 3, fillColor: '#2563eb', fillOpacity: 1 }).addTo(map);
+      focusOn(e.latlng.lat, e.latlng.lng, 17);
+    });
+    map.on('locationerror', () => toast('Местоположението не е достъпно'));
+    $('#tool-fit').onclick = () => fitRows(state.matched.slice(0, MAX_DOTS));
+    $('#tool-mark').onclick = () => {
+      state.markMode = !state.markMode;
+      $('#tool-mark').classList.toggle('on', state.markMode);
+      setHint(state.markMode ? 'Маркиране: докосвайте парцели, за да ги изберете' : '');
+    };
+    $('#tool-rect').onclick = () => (rect.active ? stopRect() : startRect());
+
+    const el = map.getContainer();
+    el.addEventListener('pointerdown', (e) => {
+      if (!rect.active || e.target.closest('.leaflet-control')) return;
+      e.preventDefault();
+      rect.start = map.mouseEventToLatLng(e);
+      rect.shape = L.rectangle([rect.start, rect.start], { color: '#2563eb', weight: 2, dashArray: '5 4', fillOpacity: 0.08, interactive: false }).addTo(map);
+      el.setPointerCapture?.(e.pointerId);
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!rect.active || !rect.start) return;
+      rect.shape.setBounds([rect.start, map.mouseEventToLatLng(e)]);
+    });
+    el.addEventListener('pointerup', (e) => {
+      if (!rect.active || !rect.start) return;
+      const b = L.latLngBounds(rect.start, map.mouseEventToLatLng(e));
+      rect.shape.remove();
+      rect.start = null;
+      rect.endedAt = Date.now();
+      const hits = state.matched.filter((r) => b.contains([r.lat, r.lon]));
+      hits.forEach((r) => state.sel.add(r.id));
+      stopRect();
+      renderSelection();
+      toast(hits.length ? `Избрани ${nf.format(hits.length)} парцела (от показаните)` : 'В правоъгълника няма показани парцели');
+    });
+  }
+  function startRect() {
+    rect.active = true;
+    map.dragging.disable();
+    map.getContainer().classList.add('drawing');
+    map.getContainer().style.touchAction = 'none';
+    $('#tool-rect').classList.add('on');
+    setHint('Начертайте правоъгълник върху картата');
+  }
+  function stopRect() {
+    rect.active = false;
+    map.dragging.enable();
+    map.getContainer().classList.remove('drawing');
+    map.getContainer().style.touchAction = '';
+    $('#tool-rect').classList.remove('on');
+    setHint(state.markMode ? 'Маркиране: докосвайте парцели, за да ги изберете' : '');
+  }
+
+  // ---------- Phone bottom sheet ----------
+  const sheet = { state: 'half' };
+  function sheetHeights() {
+    const vh = window.innerHeight;
+    const peek = ($('#sheet-handle').offsetHeight || 20) + document.querySelector('#panel header').offsetHeight
+      + (!$('#selbar').hidden ? $('#selbar').offsetHeight : 0);
+    return { peek: Math.min(peek, vh * 0.45), half: Math.round(vh * 0.52), full: vh - 56 };
+  }
+  function sheetHeight() { return isPhone() ? sheetHeights()[sheet.state] : 0; }
+  function snapSheet(to) {
+    sheet.state = to;
+    applySheet();
+  }
+  function applySheet(px) {
+    const root = document.documentElement;
+    if (!isPhone()) { root.style.setProperty('--sheet-h', '0px'); $('#panel').style.height = ''; return; }
+    const h = px ?? sheetHeights()[sheet.state];
+    root.style.setProperty('--sheet-h', h + 'px');
+    $('#panel').classList.remove('sheet-peek', 'sheet-half', 'sheet-full');
+    $('#panel').classList.add('sheet-' + sheet.state);
+  }
+  function updateSheetForSelbar() { if (isPhone() && sheet.state === 'peek') applySheet(); }
+  function initSheet() {
+    const panel = $('#panel');
+    const grab = [$('#sheet-handle'), document.querySelector('#panel header')];
+    let startY = 0, startH = 0, moved = false, dragging = false;
+    const onDown = (e) => {
+      if (!isPhone() || e.target.closest('input, button, .suggest, select, a')) return;
+      dragging = true; moved = false; startY = e.clientY; startH = panel.offsetHeight;
+      panel.classList.add('dragging');
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    };
+    const onMove = (e) => {
+      if (!dragging) return;
+      const dy = startY - e.clientY;
+      if (Math.abs(dy) > 4) moved = true;
+      const h = Math.max(80, Math.min(window.innerHeight - 40, startH + dy));
+      applySheet(h);
+    };
+    const onUp = () => {
+      if (!dragging) return;
+      dragging = false;
+      panel.classList.remove('dragging');
+      const hs = sheetHeights();
+      const h = panel.offsetHeight;
+      if (!moved) {
+        sheet.state = { peek: 'half', half: 'full', full: 'peek' }[sheet.state];
+      } else {
+        sheet.state = Object.entries(hs).sort((a, b) => Math.abs(a[1] - h) - Math.abs(b[1] - h))[0][0];
+      }
+      applySheet();
+    };
+    grab.forEach((g) => {
+      g.addEventListener('pointerdown', onDown);
+      g.addEventListener('pointermove', onMove);
+      g.addEventListener('pointerup', onUp);
+      g.addEventListener('pointercancel', onUp);
+    });
+    $('#search').addEventListener('focus', () => { if (isPhone() && sheet.state === 'peek') snapSheet('half'); });
+    document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => {
+      if (isPhone() && sheet.state === 'peek') snapSheet('half');
+    }));
+    window.addEventListener('resize', () => { applySheet(); map.invalidateSize(); });
+    applySheet();
+  }
+
+  // Start on the filters tab (the data load switches to the right one).
+  initSearch();
+  initTools();
+  initLayersPanel();
+  initSheet();
+  setTab('filters');
+})();
