@@ -163,7 +163,8 @@
   makePane('plots', 430, true);
   const zonesCanvas = L.canvas({ pane: 'zones', padding: 0.5 });
   const restrCanvas = L.canvas({ pane: 'restrictions', padding: 0.5 });
-  const plotsCanvas = L.canvas({ pane: 'plots', padding: 0.5, tolerance: canHover ? 2 : 8 });
+  // Small padding keeps the canvas under Safari's size limit on large Retina screens (it draws nothing above it).
+  const plotsCanvas = L.canvas({ pane: 'plots', padding: 0.2, tolerance: canHover ? 2 : 8 });
 
   const wms = (layers) => L.tileLayer.wms(WMS, {
     layers, format: 'image/png', transparent: true, version: '1.1.1', minZoom: 15, maxZoom: 20,
@@ -348,6 +349,8 @@
     const s = shown
       ? { color: c, weight: 1.2, opacity: 1, fill: true, fillColor: c, fillOpacity: 0.45, dashArray: null }
       : { color: '#6b7280', weight: 0.9, opacity: 0.75, fill: true, fillColor: '#6b7280', fillOpacity: 0.04, dashArray: null };
+    // Search hits stand out even when their category colour is grey (e.g. built plots).
+    if (shown && (state.entity || state.text)) Object.assign(s, { color: '#101820', weight: 2.5, fillOpacity: 0.6 });
     if (state.favs.has(id)) Object.assign(s, { color: cssVar('--fav'), weight: 3, opacity: 1 });
     if (state.sel.has(id)) Object.assign(s, { color: cssVar('--accent'), weight: 3.5, opacity: 1, fillOpacity: Math.max(s.fillOpacity, 0.3), fillColor: shown ? c : cssVar('--accent') });
     if (id === state.current) Object.assign(s, { color: cssVar('--reg'), weight: 3.5, opacity: 1, dashArray: '9 6', fillOpacity: 0.55, fillColor: c });
