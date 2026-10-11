@@ -62,7 +62,10 @@
     },
   };
   const isPhone = () => window.matchMedia('(max-width: 699px)').matches;
-  const isDark = () => window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const isDark = () => {
+    const t = document.documentElement.dataset.theme;
+    return t ? t === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+  };
   const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   // 10135.5501.356 -> city code dimmed, cadastral region, plot number in bold (as on a КККР sheet).
   function cad(id) {
@@ -78,6 +81,8 @@
     fit: '<svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
     star: '<svg viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.7l5.9-.9L12 3.5Z"/></svg>',
     check: '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>',
+    sun: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/></svg>',
+    moon: '<svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg>',
   };
   const canHover = window.matchMedia('(hover: hover)').matches;
 
@@ -308,7 +313,8 @@
       <button type="button" id="tool-locate" title="Къде съм" aria-label="Къде съм">${ICON.locate}</button>
       <button type="button" id="tool-rect" title="Избери с правоъгълник" aria-label="Избери с правоъгълник">${ICON.rect}</button>
       <button type="button" id="tool-mark" title="Маркиране с докосване" aria-label="Маркиране с докосване">${ICON.mark}</button>
-      <button type="button" id="tool-fit" title="Покажи всички резултати" aria-label="Покажи всички резултати">${ICON.fit}</button>`;
+      <button type="button" id="tool-fit" title="Покажи всички резултати" aria-label="Покажи всички резултати">${ICON.fit}</button>
+      <button type="button" id="tool-theme"></button>`;
     L.DomEvent.disableClickPropagation(d);
     return d;
   };
@@ -1143,7 +1149,26 @@
       $('#layers-section').scrollIntoView({ block: 'start' });
     };
   }
+  function renderThemeButton() {
+    const b = $('#tool-theme');
+    const dark = isDark();
+    b.innerHTML = dark ? ICON.sun : ICON.moon;
+    b.title = dark ? 'Светла тема' : 'Тъмна тема';
+    b.setAttribute('aria-label', b.title);
+  }
+  function setTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    store.set('varna-plots:theme', theme);
+    document.querySelector('meta[name=theme-color]').content = theme === 'dark' ? '#131b20' : '#fbfcfc';
+    renderThemeButton();
+    // Canvas colours are read from the theme, so redraw the plots.
+    renderDots();
+    plots.eachLayer((l) => l.setStyle(polyStyle(l.feature.properties.id)));
+    renderLegend();
+  }
   function initTools() {
+    renderThemeButton();
+    $('#tool-theme').onclick = () => setTheme(isDark() ? 'light' : 'dark');
     $('#tool-locate').onclick = () => {
       map.locate({ setView: false, enableHighAccuracy: true });
       toast('Търсене на местоположението…');

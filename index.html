@@ -6,6 +6,10 @@
   <meta name="theme-color" content="#11181d">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <title>Парцели Варна</title>
+  <script>
+    // Apply the saved light/dark choice before the page paints.
+    try { const t = JSON.parse(localStorage.getItem('varna-plots:theme')); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Unbounded:wght@500;700&display=swap">
@@ -202,6 +206,6 @@
   <div id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script src="app.js?v=21"></script>
+  <script src="app.js?v=22"></script>
 </body>
 </html>
