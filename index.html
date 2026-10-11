@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Unbounded:wght@500;700&display=swap">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="style.css?v=35">
+  <link rel="stylesheet" href="style.css?v=36">
 </head>
 <body class="loading">
   <div id="topbar">
@@ -26,7 +26,6 @@
       <button type="button" role="tab" data-tab="list">Парцели <span class="count" id="n-list"></span></button>
       <button type="button" role="tab" data-tab="auctions">Търгове <span class="count" id="n-auctions"></span></button>
       <button type="button" role="tab" data-tab="pup">ПУП <span class="count" id="n-pup"></span></button>
-      <button type="button" role="tab" data-tab="owners">Фирми</button>
       <button type="button" role="tab" data-tab="favs">Любими <span class="count" id="n-favs"></span></button>
     </nav>
     <div class="search-wrap">
@@ -155,42 +154,47 @@
             <span class="fb-text" id="filter-summary">Свободни терени</span>
             <span class="fb-btn">Филтри</span>
           </button>
-          <div class="summary" id="summary">Зареждане…</div>
-          <div class="toolbar">
-            <button type="button" class="btn-text" id="fit-results">На картата</button>
-            <button type="button" class="btn-text" id="select-all">Избери всички</button>
-            <button type="button" class="btn-text" id="export-list">Експорт</button>
+          <div class="seg list-mode" data-for="list-mode">
+            <button type="button" data-value="plots">Парцели</button>
+            <button type="button" data-value="owners">Собственици</button>
+          </div>
+          <input type="hidden" id="list-mode" value="plots">
+          <div id="plots-head">
+            <div class="summary" id="summary">Зареждане…</div>
+            <div class="toolbar">
+              <button type="button" class="btn-text" id="fit-results">На картата</button>
+              <button type="button" class="btn-text" id="select-all">Избери всички</button>
+              <button type="button" class="btn-text" id="export-list">Експорт</button>
+            </div>
+          </div>
+          <div id="owners-head" hidden>
+            <p class="summary" id="owners-count">Собствениците на парцелите по филтрите.</p>
+            <input id="owners-filter" type="search" placeholder="Филтрирай по име или ЕИК" autocomplete="off" autocapitalize="off" spellcheck="false">
+            <div class="field">
+              <div class="chips-wrap" id="owners-kinds">
+                <label class="lchip"><input type="checkbox" value="firm" checked><span>Фирми</span></label>
+                <label class="lchip"><input type="checkbox" value="Община" checked><span>Община</span></label>
+                <label class="lchip"><input type="checkbox" value="Държавата" checked><span>Държава</span></label>
+              </div>
+            </div>
+            <div class="field">
+              <span class="label">Подреди</span>
+              <select id="owners-sort" aria-label="Подреди собствениците">
+                <option value="area">По площ</option>
+                <option value="count">По брой парцели</option>
+              </select>
+            </div>
           </div>
         </div>
         <ol class="results" id="results"></ol>
-      </section>
-
-      <section class="view" id="view-owners" role="tabpanel">
-        <div class="list-head">
-          <input id="owners-filter" type="search" placeholder="Филтрирай по име или ЕИК" autocomplete="off" autocapitalize="off" spellcheck="false">
-          <div class="chips-wrap" id="owners-kinds">
-            <label class="lchip"><input type="checkbox" value="firm" checked><span>Фирми</span></label>
-            <label class="lchip"><input type="checkbox" value="Община"><span>Община</span></label>
-            <label class="lchip"><input type="checkbox" value="Държавата"><span>Държава</span></label>
-          </div>
-          <div class="field">
-            <span class="label" id="owners-count"></span>
-            <select id="owners-sort" aria-label="Подреди фирмите">
-              <option value="freeArea">По свободна площ</option>
-              <option value="area">По обща площ</option>
-              <option value="count">По брой парцели</option>
-            </select>
-          </div>
-        </div>
-        <ol class="results" id="owner-results"></ol>
+        <ol class="results" id="owner-results" hidden></ol>
       </section>
 
       <section class="view" id="view-auctions" role="tabpanel">
         <div class="list-head">
-          <p class="feed-intro">Публични продажби на имоти от частни съдебни изпълнители, окръжен съд Варна.</p>
+          <p class="feed-intro">Публични продажби на имоти в гр. Варна от частни съдебни изпълнители.</p>
           <div class="chips-wrap" id="auction-kinds"></div>
           <div class="field">
-            <label class="lchip"><input type="checkbox" id="auction-city"><span>Само гр. Варна</span></label>
             <select id="auction-sort" aria-label="Подреди търговете">
               <option value="deadline">По краен срок</option>
               <option value="new">Най-нови</option>
@@ -257,6 +261,6 @@
   <div id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script src="app.js?v=35"></script>
+  <script src="app.js?v=36"></script>
 </body>
 </html>

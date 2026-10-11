@@ -121,8 +121,10 @@
     matched: [], matchSet: new Set(),
     owners: new Set(saved?.owners || DEFAULTS.owners),
     statuses: new Set(saved?.statuses || DEFAULTS.statuses),
-    entity: null,          // {name, eik, ids:Set} when a company is chosen from search
-    text: '',              // free-text search over all plots
+    entity: null,          // company chosen from search or the owners list; narrows the filtered plots
+    text: '',              // free-text search over owner names; narrows the filtered plots too
+    searchAll: false,      // show all the company's / search's plots, ignoring the filters
+    scope: { total: 0, inFilters: 0 },
     current: null,         // plot open in the detail view
     pendingDetail: null,
     sel: new Set(),
@@ -681,7 +683,6 @@
       filters: 'Филтри',
       auctions: 'Търгове',
       pup: 'ПУП',
-      owners: 'Фирми',
       favs: `Любими${n(state.favs.size)}`,
       detail: state.current ? cad(state.current) : 'Парцел',
     };
@@ -718,18 +719,24 @@
     const district = $('#district').value;
     const zg = $('#zone-group').value;
     const sort = $('#sort').value;
+    const passes = (r) => state.owners.has(r.cat) && state.statuses.has(r.status) && r.area >= minArea
+      && (!district || r.district === district) && (!zg || (r.zone || '').startsWith(zg));
     let list;
     if (state.mode) {
       const ids = new Set(visibleEvents(state.mode).flatMap((e) => e.plot_ids));
       list = [...ids].map((id) => state.byId.get(id)).filter(Boolean);
-    } else if (state.entity) {
-      list = state.entity.ids.map((id) => state.byId.get(id)).filter(Boolean);
-    } else if (state.text) {
-      const tokens = norm(state.text, true).split(' ').filter(Boolean);
-      list = state.rows.filter((r) => r.id.includes(state.text) || (tokens.length && tokens.every((t) => r.qn.includes(t))));
+    } else if (state.entity || state.text) {
+      let all;
+      if (state.entity) all = state.entity.ids.map((id) => state.byId.get(id)).filter(Boolean);
+      else {
+        const tokens = norm(state.text, true).split(' ').filter(Boolean);
+        all = state.rows.filter((r) => r.id.includes(state.text) || (tokens.length && tokens.every((t) => r.qn.includes(t))));
+      }
+      const inFilters = all.filter(passes);
+      state.scope = { total: all.length, inFilters: inFilters.length };
+      list = state.searchAll ? all : inFilters;
     } else {
-      list = state.rows.filter((r) => state.owners.has(r.cat) && state.statuses.has(r.status) && r.area >= minArea
-        && (!district || r.district === district) && (!zg || (r.zone || '').startsWith(zg)));
+      list = state.rows.filter(passes);
     }
     list.sort((a, b) => (b[sort] || 0) - (a[sort] || 0));
     state.matched = list;
@@ -747,6 +754,7 @@
     renderActiveFilter();
     renderSummary();
     renderList();
+    if ($('#list-mode').value === 'owners') renderOwners();
     markPreset();
     renderFilterSummary();
     renderSheetTitle();
@@ -765,18 +773,33 @@
     const el = $('#active-filter');
     if (!state.entity && !state.text) { el.hidden = true; return; }
     el.hidden = false;
-    const n = state.matched.length;
     const total = state.matched.reduce((s, r) => s + (r.area || 0), 0);
     const e = state.entity;
-    const breakdown = e ? Object.keys(STATUS).filter((k) => e.byStatus[k])
-      .map((k) => `<span class="chip-s" style="--c:${STATUS[k].color}">${STATUS[k].label} ${e.byStatus[k]}</span>`).join('') : '';
+    const { total: all, inFilters } = state.scope;
+    const word = (k) => (k === 1 ? 'парцел' : 'парцела');
+    const count = all === inFilters
+      ? `${nf.format(all)} ${word(all)}`
+      : state.searchAll
+        ? `всички ${nf.format(all)} ${word(all)} · ${nf.format(inFilters)} по филтрите`
+        : `${nf.format(inFilters)} от ${nf.format(all)} ${word(all)} по филтрите`;
+    const byStatus = {};
+    state.matched.forEach((r) => { byStatus[r.status] = (byStatus[r.status] || 0) + 1; });
+    const breakdown = Object.keys(STATUS).filter((k) => byStatus[k])
+      .map((k) => `<span class="chip-s" style="--c:${STATUS[k].color}">${STATUS[k].label} ${byStatus[k]}</span>`).join('');
+    const scopeBtn = all === inFilters ? ''
+      : state.searchAll
+        ? `<button type="button" class="btn-text af-scope">Само по филтрите (${nf.format(inFilters)})</button>`
+        : `<button type="button" class="btn-text af-scope">Покажи всичките ${nf.format(all)}</button>`;
     el.innerHTML = `<button type="button" class="af-back">‹ Всички парцели</button>
       <div class="af-text">
         <b>${e ? esc(e.name) : `Търсене: „${esc(state.text)}“`}</b>
-        <span>${e && e.eik ? `ЕИК ${esc(e.eik)} · ` : ''}${nf.format(n)} парцела · ${ha(total)} ха${e && e.freeArea ? ` · ${ha(e.freeArea)} ха незастроени или частично` : ''}</span>
+        <span>${e && e.eik ? `ЕИК ${esc(e.eik)} · ` : ''}${count} · ${ha(total)} ха</span>
         ${breakdown ? `<div class="chips">${breakdown}</div>` : ''}
+        ${scopeBtn}
       </div>`;
     el.querySelector('.af-back').onclick = clearSearch;
+    const sb = el.querySelector('.af-scope');
+    if (sb) sb.onclick = () => { state.searchAll = !state.searchAll; apply(); fitRows(state.matched); };
   }
 
   function renderSummary() {
@@ -784,7 +807,7 @@
     const total = list.reduce((s, r) => s + (r.area || 0), 0);
     if (!state.mode) $('#n-list').textContent = list.length ? nf.format(list.length) : '';
     $('#summary').innerHTML = list.length
-      ? `<b>${nf.format(list.length)}</b> парцела · <b>${ha(total)}</b> ха${state.entity || state.text ? ' · филтрите не важат при търсене' : ''}`
+      ? `<b>${nf.format(list.length)}</b> парцела · <b>${ha(total)}</b> ха`
         + (list.length > MAX_DOTS ? `<br>На картата: най-големите ${nf.format(MAX_DOTS)}.` : '')
       : (state.entity || state.text ? 'Нищо не е намерено.' : 'Няма парцели по тези филтри. Отметнете още собственици или състояния.');
   }
@@ -897,6 +920,7 @@
     refreshListMarks();
     restyle(rows.map((r) => r.id));
     if (state.current) renderDetail();
+    if (state.rows.length && $('#list-mode').value === 'owners') renderOwners();
     updateSheetForSelbar();
   }
 
@@ -1020,7 +1044,7 @@
     d.querySelector('[data-act=link]').onclick = () => copy(location.origin + location.pathname + '#id=' + id, 'Линкът е копиран');
     const note = d.querySelector('.fav-note');
     if (note) note.oninput = () => { const f = state.favs.get(id); if (f) { f.note = note.value; saveFavs(); } };
-    d.querySelectorAll('[data-ent]').forEach((b) => { b.onclick = () => chooseEntity(state.entities[+b.dataset.ent]); });
+    d.querySelectorAll('[data-ent]').forEach((b) => { b.onclick = () => chooseEntity(state.entities[+b.dataset.ent], true); });
     const more = d.querySelector('.more-facts');
     if (more) more.addEventListener('toggle', () => store.set('varna-plots:facts-open', more.open));
   }
@@ -1055,7 +1079,7 @@
     if (auctions) {
       state.feedUpdated = auctions.updated || '';
       Object.values(auctions.listings)
-        .filter((a) => !a.removed && (!a.announce || a.announce >= today))
+        .filter((a) => !a.removed && (!a.announce || a.announce >= today) && a.settlement === 'гр. Варна')
         .forEach((a) => events.push({
           kind: 'auction', date: a.published || a.first_seen, a, akind: auctionKind(a.type),
           all_ids: a.cad_ids, plot_ids: a.plot_ids.filter((id) => state.byId.has(id)),
@@ -1079,7 +1103,6 @@
     });
     toggleChips($('#auction-kinds'), AUCTION_KINDS, state.auctionKinds, akCounts, () => renderEvents('auctions'));
     toggleChips($('#pup-types'), PUP_TYPES, state.pupTypes, pupCounts, () => renderEvents('pup'));
-    $('#auction-city').addEventListener('change', () => renderEvents('auctions'));
     $('#auction-sort').addEventListener('change', () => renderEvents('auctions'));
     $('#pup-linked').addEventListener('change', () => renderEvents('pup'));
     $('#pup-period').addEventListener('change', () => renderEvents('pup'));
@@ -1094,7 +1117,6 @@
   }
   function visibleEvents(mode) {
     if (mode === 'auctions') {
-      const cityOnly = $('#auction-city').checked;
       const sort = $('#auction-sort').value;
       const by = {
         deadline: (x, y) => (x.a.period_to || '9').localeCompare(y.a.period_to || '9'),
@@ -1103,7 +1125,7 @@
         area: (x, y) => (y.a.area_m2 || 0) - (x.a.area_m2 || 0),
       }[sort];
       return state.events.filter((e) => e.kind === 'auction' && state.auctionKinds.has(e.akind)
-        && (!cityOnly || e.a.settlement === 'гр. Варна')).sort(by);
+).sort(by);
     }
     const days = +$('#pup-period').value;
     const since = days ? new Date(Date.now() - days * 864e5).toISOString().slice(0, 10) : '';
@@ -1209,32 +1231,58 @@
     }).join('')}</div>`;
   }
 
-  // ---------- Фирми tab ----------
+  // ---------- Owners of the listed plots (Парцели › Собственици) ----------
   function initOwnersTab() {
     let t;
     $('#owners-filter').addEventListener('input', () => { clearTimeout(t); t = setTimeout(renderOwners, 150); });
     $('#owners-sort').addEventListener('change', renderOwners);
     document.querySelectorAll('#owners-kinds input').forEach((cb) => cb.addEventListener('change', renderOwners));
-    renderOwners();
+    $('#list-mode').addEventListener('change', () => {
+      const owners = $('#list-mode').value === 'owners';
+      $('#plots-head').hidden = $('#results').hidden = owners;
+      $('#owners-head').hidden = $('#owner-results').hidden = !owners;
+      if (owners) renderOwners();
+      $('.views').scrollTop = 0;
+    });
   }
+  // Groups the plots in the list (or the selected ones) by owner: only what matches is counted.
   function renderOwners() {
-    const q = $('#owners-filter').value.trim();
+    const fromSel = state.sel.size > 0;
+    const rows = fromSel ? [...state.sel].map((id) => state.byId.get(id)).filter(Boolean) : state.matched;
+    const q = norm($('#owners-filter').value.trim());
+    const qDigits = $('#owners-filter').value.replace(/\D/g, '');
     const kinds = new Set([...document.querySelectorAll('#owners-kinds input:checked')].map((c) => c.value));
     const sort = $('#owners-sort').value;
-    let list = q ? findEntities(q, 400) : state.entities;
-    list = list.filter((e) => kinds.has(e.kind === 'Община' || e.kind === 'Държавата' ? e.kind : 'firm'));
-    if (!q) list = [...list].sort((a, b) => (sort === 'count' ? b.ids.length - a.ids.length : b[sort] - a[sort]));
-    $('#owners-count').textContent = `${nf.format(list.length)} собственика`;
+    const agg = new Map();
+    let personPlots = 0;
+    for (const r of rows) {
+      if (r.cat === 'person' || r.cat === 'mixed') personPlots++;
+      for (const e of state.entitiesByPlot.get(r.id) || []) {
+        let a = agg.get(e);
+        if (!a) agg.set(e, (a = { e, n: 0, area: 0, free: 0 }));
+        a.n++;
+        a.area += r.area || 0;
+        if (r.status === 'free' || r.status === 'partial') a.free += r.area || 0;
+      }
+    }
+    let list = [...agg.values()].filter(({ e }) => kinds.has(e.kind === 'Община' || e.kind === 'Държавата' ? e.kind : 'firm')
+      && (!q || (qDigits.length >= 4 && e.eik && e.eik.startsWith(qDigits)) || q.split(' ').every((t) => e.qn.includes(t))));
+    list.sort((a, b) => (sort === 'count' ? b.n - a.n || b.area - a.area : b.area - a.area));
+    const of = fromSel ? `${nf.format(rows.length)}-те избрани парцела` : `${nf.format(rows.length)} парцела в списъка`;
+    $('#owners-count').innerHTML = `<b>${nf.format(list.length)}</b> ${list.length === 1 ? 'собственик' : 'собственика'} на ${of}`
+      + (personPlots ? ` · ${nf.format(personPlots)} парцела са на физически лица (без имена)` : '')
+      + (list.length > 200 ? '<br>Показани са първите 200.' : '');
     const ol = $('#owner-results');
     ol.innerHTML = '';
     const frag = document.createDocumentFragment();
-    list.slice(0, 200).forEach((e) => {
+    list.slice(0, 200).forEach(({ e, n, area, free }) => {
       const li = document.createElement('li');
+      const allN = e.ids.length;
       li.innerHTML = `<div class="main">
-          <div class="line1"><span class="oname">${esc(e.name)}</span><span class="area">${ha(e.area)} ха</span></div>
+          <div class="line1"><span class="oname">${esc(e.name)}</span><span class="area">${ha(area)} ха</span></div>
           <div class="chips">
-            <span class="chip-s plain">${nf.format(e.ids.length)} ${e.ids.length === 1 ? 'парцел' : 'парцела'}</span>
-            ${e.freeArea ? `<span class="chip-s" style="--c:${STATUS.free.color}">${ha(e.freeArea)} ха незастроени/частично</span>` : ''}
+            <span class="chip-s plain">${nf.format(n)}${n < allN ? ` от ${nf.format(allN)}` : ''} ${allN === 1 ? 'парцел' : 'парцела'}</span>
+            ${free ? `<span class="chip-s" style="--c:${STATUS.free.color}">${ha(free)} ха незастроени/частично</span>` : ''}
             ${e.eik ? `<span class="chip-s plain">ЕИК ${esc(e.eik)}</span>` : ''}
           </div>
         </div><span class="go">›</span>`;
@@ -1242,6 +1290,7 @@
       frag.appendChild(li);
     });
     ol.appendChild(frag);
+    if (!list.length) ol.innerHTML = `<li class="empty">${rows.length ? 'Няма фирми или институции сред собствениците.' : 'Няма парцели в списъка.'}</li>`;
   }
 
   // ---------- Search ----------
@@ -1261,7 +1310,7 @@
         e.preventDefault();
         const pick = sug.items[Math.max(sug.hl, 0)];
         if (pick && (sug.hl >= 0 || pick.kind === 'entity')) pick.go();
-        else if (input.value.trim()) { state.text = input.value.trim(); state.entity = null; hideSuggest(); apply(); setTab('list'); }
+        else if (input.value.trim()) searchText(input.value.trim());
       }
     });
     document.addEventListener('pointerdown', (e) => { if (!e.target.closest('.search-wrap')) hideSuggest(); });
@@ -1323,24 +1372,50 @@
           <span class="s-meta">${esc(r.owner)}</span></button>`;
       });
     }
-    sug.items.push({ kind: 'text', go: () => { state.text = q; state.entity = null; hideSuggest(); apply(); setTab('list'); } });
+    sug.items.push({ kind: 'text', go: () => searchText(q) });
     html += `<h4>Всички парцели</h4><button type="button" role="option"><span class="s-name">Търси „${esc(q)}“ в собствениците</span><span class="s-n">Enter</span></button>`;
     box.innerHTML = html;
     box.querySelectorAll('button').forEach((b, i) => b.addEventListener('click', () => sug.items[i].go()));
     box.hidden = false;
   }
-  function chooseEntity(e) {
+  // A company narrows the plots that pass the filters; `all` shows every plot it owns.
+  function chooseEntity(e, all = false) {
     hideSuggest();
     state.entity = e;
     state.text = '';
+    state.searchAll = all;
     $('#search').value = e.name;
+    setListMode('plots');
     apply();
+    if (!all && !state.matched.length && state.scope.total) {
+      state.searchAll = true;
+      apply();
+      toast(`Филтрите скриват парцелите на ${e.name} — показани са всичките ${nf.format(state.scope.total)}`);
+    }
     setTab('list');
     fitRows(state.matched);
+  }
+  function searchText(q) {
+    state.text = q;
+    state.entity = null;
+    state.searchAll = false;
+    hideSuggest();
+    setListMode('plots');
+    apply();
+    if (!state.matched.length && state.scope.total) { state.searchAll = true; apply(); toast('Филтрите скриват резултатите — показани са всички'); }
+    setTab('list');
+  }
+  function setListMode(v) {
+    const input = $('#list-mode');
+    if (input.value === v) return;
+    input.value = v;
+    input.dispatchEvent(new Event('sync'));
+    input.dispatchEvent(new Event('change'));
   }
   function clearSearch() {
     state.entity = null;
     state.text = '';
+    state.searchAll = false;
     $('#search').value = '';
     apply();
   }
