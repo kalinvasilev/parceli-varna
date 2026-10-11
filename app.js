@@ -583,7 +583,7 @@
     if ($('#district').value) parts.push($('#district').value);
     if ($('#zone-group').value) parts.push('зона ' + $('#zone-group').value);
     $('#filter-summary').textContent = parts.join(' · ');
-    $('#filters-apply').textContent = state.matched.length ? `Покажи ${nf.format(state.matched.length)} парцела` : 'Няма парцели по тези филтри';
+    $('#filters-apply').textContent = state.matched.length ? `Покажи ${nf.format(state.matched.length)} ${state.matched.length === 1 ? 'парцел' : 'парцела'}` : 'Няма парцели по тези филтри';
   }
   function initSegments() {
     document.querySelectorAll('.seg[data-for]').forEach((seg) => {
@@ -1474,11 +1474,26 @@
     document.querySelectorAll('[data-layer]').forEach((cb) => {
       cb.onchange = () => (cb.checked ? OVERLAYS[cb.dataset.layer].addTo(map) : OVERLAYS[cb.dataset.layer].remove());
     });
-    $('#tool-layers').onclick = () => {
-      setTab('filters');
-      if (isPhone() && sheet.state !== 'full') snapSheet('half');
-      $('#layers-section').scrollIntoView({ block: 'start' });
+    // Map settings live on the map, next to the layers button, so the panel stays where it is.
+    const pop = $('#layers-pop');
+    map.getContainer().appendChild(pop);
+    L.DomEvent.disableClickPropagation(pop);
+    L.DomEvent.disableScrollPropagation(pop);
+    const btn = $('#tool-layers');
+    const show = (open) => {
+      if (open) {   // open to the left of the button, aligned with its top
+        const m = map.getContainer().getBoundingClientRect(), b = btn.getBoundingClientRect();
+        pop.style.top = `${b.top - m.top}px`;
+        pop.style.right = `${m.right - b.left + 8}px`;
+      }
+      pop.hidden = !open;
+      btn.classList.toggle('on', open);
+      btn.setAttribute('aria-expanded', open);
     };
+    btn.onclick = () => show(pop.hidden);
+    pop.querySelector('.lp-close').onclick = () => show(false);
+    document.addEventListener('pointerdown', (e) => { if (!pop.hidden && !e.target.closest('#layers-pop, #tool-layers')) show(false); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pop.hidden) show(false); });
   }
   function renderThemeButton() {
     const b = $('#tool-theme');

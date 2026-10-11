@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Unbounded:wght@500;700&display=swap">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="style.css?v=37">
+  <link rel="stylesheet" href="style.css?v=38">
 </head>
 <body class="loading">
   <div id="topbar">
@@ -105,37 +105,13 @@
         </div>
 
         <div class="group">
-          <h3>Изглед</h3>
+          <h3>Подреди списъка</h3>
           <div class="field">
-            <span class="label">Подреди по</span>
             <div class="seg" data-for="sort">
               <button type="button" data-value="area">Площ</button>
               <button type="button" data-value="max_floor">Макс. РЗП</button>
             </div>
             <input type="hidden" id="sort" value="area">
-          </div>
-          <div class="field">
-            <span class="label">Оцвети по</span>
-            <div class="seg" data-for="color-by">
-              <button type="button" data-value="owner">Собственик</button>
-              <button type="button" data-value="status">Състояние</button>
-            </div>
-            <input type="hidden" id="color-by" value="owner">
-          </div>
-        </div>
-
-        <div class="group" id="layers-section">
-          <h3>Карта</h3>
-          <div class="seg base" role="group" aria-label="Основа на картата">
-            <button type="button" data-base="osm" aria-pressed="true">Подробна</button>
-            <button type="button" data-base="clean" aria-pressed="false">Изчистена</button>
-            <button type="button" data-base="sat" aria-pressed="false">Сателит</button>
-          </div>
-          <div class="chips-wrap">
-            <label class="lchip"><input type="checkbox" data-layer="zones"><span>Зони по ОУП</span></label>
-            <label class="lchip"><input type="checkbox" data-layer="restrictions"><span>Ограничения</span></label>
-            <label class="lchip"><input type="checkbox" data-layer="buildings"><span>Сгради</span></label>
-            <label class="lchip"><input type="checkbox" data-layer="cadastre"><span>Кадастър</span></label>
           </div>
         </div>
 
@@ -257,10 +233,32 @@
     </div>
   </aside>
 
+  <div id="layers-pop" class="layers-pop" role="dialog" aria-label="Карта" hidden>
+    <div class="lp-head"><h3>Карта</h3><button type="button" class="lp-close" aria-label="Затвори">✕</button></div>
+    <div class="seg base" role="group" aria-label="Основа на картата">
+      <button type="button" data-base="osm" aria-pressed="true">Подробна</button>
+      <button type="button" data-base="clean" aria-pressed="false">Изчистена</button>
+      <button type="button" data-base="sat" aria-pressed="false">Сателит</button>
+    </div>
+    <span class="label">Оцвети парцелите по</span>
+    <div class="seg" data-for="color-by">
+      <button type="button" data-value="owner">Собственик</button>
+      <button type="button" data-value="status">Състояние</button>
+    </div>
+    <input type="hidden" id="color-by" value="owner">
+    <span class="label">Слоеве</span>
+    <div class="chips-wrap">
+      <label class="lchip"><input type="checkbox" data-layer="zones"><span>Зони по ОУП</span></label>
+      <label class="lchip"><input type="checkbox" data-layer="restrictions"><span>Ограничения</span></label>
+      <label class="lchip"><input type="checkbox" data-layer="buildings"><span>Сгради</span></label>
+      <label class="lchip"><input type="checkbox" data-layer="cadastre"><span>Кадастър</span></label>
+    </div>
+  </div>
+
   <main id="map" aria-label="Карта"><div class="map-loading" aria-hidden="true"></div></main>
   <div id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script src="app.js?v=37"></script>
+  <script src="app.js?v=38"></script>
 </body>
 </html>
