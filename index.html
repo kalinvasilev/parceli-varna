@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <title>Парцели Варна</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="style.css?v=12">
+  <link rel="stylesheet" href="style.css?v=13">
 </head>
 <body>
   <aside id="panel" class="sheet-half" aria-label="Панел">
@@ -23,7 +23,8 @@
       <nav class="tabs" role="tablist">
         <button type="button" role="tab" data-tab="filters">Филтри</button>
         <button type="button" role="tab" data-tab="list">Списък <span class="count" id="n-list"></span></button>
-        <button type="button" role="tab" data-tab="favs">★ Любими <span class="count" id="n-favs"></span></button>
+        <button type="button" role="tab" data-tab="owners">Фирми</button>
+        <button type="button" role="tab" data-tab="favs">★ <span class="count" id="n-favs"></span></button>
       </nav>
     </header>
 
@@ -109,6 +110,27 @@
         <ol class="results" id="results"></ol>
       </section>
 
+      <section class="view" id="view-owners" role="tabpanel">
+        <p class="intro">Всички фирми и институции с парцели в гр. Варна. Изберете една, за да видите всичките ѝ парцели.</p>
+        <input id="owners-filter" type="search" placeholder="Филтрирай по име или ЕИК…" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <div class="row">
+          <div class="layer-toggles" id="owners-kinds">
+            <label class="toggle"><input type="checkbox" value="firm" checked><span>Фирми</span></label>
+            <label class="toggle"><input type="checkbox" value="Община"><span>Община</span></label>
+            <label class="toggle"><input type="checkbox" value="Държавата"><span>Държава</span></label>
+          </div>
+        </div>
+        <div class="row">
+          <label for="owners-sort" id="owners-count"></label>
+          <select id="owners-sort">
+            <option value="freeArea">По незастроена площ</option>
+            <option value="area">По обща площ</option>
+            <option value="count">По брой парцели</option>
+          </select>
+        </div>
+        <ol class="results" id="owner-results"></ol>
+      </section>
+
       <section class="view" id="view-favs" role="tabpanel">
         <p class="intro" id="favs-intro">Добавете парцели с ★. Любимите се пазят в този браузър.</p>
         <div class="toolbar">
@@ -142,6 +164,6 @@
   <div id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script src="app.js?v=13"></script>
+  <script src="app.js?v=16"></script>
 </body>
 </html>

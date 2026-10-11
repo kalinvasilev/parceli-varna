@@ -202,7 +202,8 @@
   legend.addTo(map);
 
   const colorBy = () => $('#color-by').value;
-  const colorOf = (r) => (colorBy() === 'owner' ? OWNER[r.cat] : STATUS[r.status])?.color || '#999';
+  const colorMode = () => (state.entity ? 'status' : colorBy());
+  const colorOf = (r) => (colorMode() === 'owner' ? OWNER[r.cat] : STATUS[r.status])?.color || '#999';
 
   function polyStyle(id) {
     const r = state.byId.get(id);
@@ -226,8 +227,8 @@
 
   function renderLegend() {
     const el = document.querySelector('.legend');
-    const src = colorBy() === 'owner' ? OWNER : STATUS;
-    el.innerHTML = `<button type="button" class="lg-toggle">${colorBy() === 'owner' ? 'Собственик' : 'Състояние'} ${el.classList.contains('closed') ? '▸' : '▾'}</button>
+    const src = colorMode() === 'owner' ? OWNER : STATUS;
+    el.innerHTML = `<button type="button" class="lg-toggle">${colorMode() === 'owner' ? 'Собственик' : 'Състояние'} ${el.classList.contains('closed') ? '▸' : '▾'}</button>
       <div class="lg-body">${Object.values(src).map((s) => `<div><i style="background:${s.color}"></i>${s.short || s.label}</div>`).join('')}
       <div><i style="border:3px solid #eab308"></i>Любим</div><div><i style="border:3px solid #2563eb"></i>Избран</div>
       ${map.getZoom() >= POLY_ZOOM ? '<div><i style="border:1px solid #6b7280"></i>Извън филтъра (кликва се)</div>' : ''}</div>`;
@@ -306,8 +307,17 @@
       state.rows.forEach((r) => state.byId.set(r.id, r));
       state.entities = ent.entities.map(([name, eik, kind, aliases, ids], i) => {
         const full = ids.map((s) => ent.prefix + s);
-        const area = full.reduce((s, id) => s + (state.byId.get(id)?.area || 0), 0);
-        const e = { i, name, eik, kind: ent.kinds[kind], aliases, ids: full, area, qn: norm(name + ' ' + aliases), qnFull: norm(name, true) };
+        let area = 0, freeArea = 0;
+        const byStatus = {};
+        for (const id of full) {
+          const r = state.byId.get(id);
+          if (!r) continue;
+          area += r.area || 0;
+          if (r.status === 'free' || r.status === 'partial') freeArea += r.area || 0;
+          byStatus[r.status] = (byStatus[r.status] || 0) + 1;
+        }
+        const e = { i, name, eik, kind: ent.kinds[kind], aliases, ids: full, area, freeArea, byStatus,
+          qn: norm(name + ' ' + aliases), qnFull: norm(name, true) };
         full.forEach((id) => {
           if (!state.entitiesByPlot.has(id)) state.entitiesByPlot.set(id, []);
           state.entitiesByPlot.get(id).push(e);
@@ -315,6 +325,7 @@
         return e;
       });
       buildControls(idx.districts);
+      initOwnersTab();
       apply();
       openFromHash();
       syncZoomLayers();
@@ -393,7 +404,9 @@
     $('#fit-results').addEventListener('click', () => { fitRows(state.matched.slice(0, MAX_DOTS)); });
     $('#select-all').addEventListener('click', () => {
       const take = state.matched.slice(0, MAX_SELECT_ALL);
-      take.forEach((r) => state.sel.add(r.id));
+      const before = [...state.sel];
+      state.sel = new Set(take.map((r) => r.id));
+      restyle(before);
       renderSelection();
       toast(state.matched.length > MAX_SELECT_ALL ? `Избрани първите ${nf.format(MAX_SELECT_ALL)}` : `Избрани ${nf.format(take.length)}`);
     });
@@ -428,7 +441,9 @@
   }
 
   function setTab(tab) {
+    const wasFavs = state.tab === 'favs';
     state.tab = tab;
+    if (state.rows.length && (wasFavs || tab === 'favs')) renderDots();
     document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', b.dataset.tab === tab));
     document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + tab));
     $('.views').scrollTop = 0;
@@ -460,6 +475,12 @@
     list.sort((a, b) => (b[sort] || 0) - (a[sort] || 0));
     state.matched = list;
     state.matchSet = new Set(list.map((r) => r.id));
+    const dropped = [...state.sel].filter((id) => !state.matchSet.has(id));
+    if (dropped.length) {
+      dropped.forEach((id) => state.sel.delete(id));
+      restyle(dropped);
+      renderSelection();
+    }
     saveFilters();
 
     renderDots();
@@ -467,11 +488,14 @@
     renderActiveFilter();
     renderSummary();
     renderList();
+    if (document.querySelector('.legend')) renderLegend();
   }
 
   function renderDots() {
     dots.clearLayers();
-    const extra = [...state.favs.keys(), ...state.sel].filter((id) => !state.matchSet.has(id)).map((id) => state.byId.get(id)).filter(Boolean);
+    const extra = state.tab === 'favs'
+      ? [...state.favs.keys()].filter((id) => !state.matchSet.has(id)).map((id) => state.byId.get(id)).filter(Boolean)
+      : [];
     const list = state.matched.slice(0, MAX_DOTS).concat(extra);
     for (const r of list) {
       const fav = state.favs.has(r.id);
@@ -493,13 +517,16 @@
     el.hidden = false;
     const n = state.matched.length;
     const total = state.matched.reduce((s, r) => s + (r.area || 0), 0);
-    el.innerHTML = state.entity
-      ? `<div class="af-text"><b>${esc(state.entity.name)}</b><span>${state.entity.eik ? 'ЕИК ' + esc(state.entity.eik) + ' · ' : ''}${nf.format(n)} парцела · ${ha(total)} ха</span></div>`
-      : `<div class="af-text"><b>Търсене: „${esc(state.text)}“</b><span>${nf.format(n)} парцела · ${ha(total)} ха</span></div>`;
-    const x = document.createElement('button');
-    x.type = 'button'; x.className = 'btn icon'; x.textContent = '✕'; x.setAttribute('aria-label', 'Махни търсенето');
-    x.onclick = clearSearch;
-    el.appendChild(x);
+    const e = state.entity;
+    const breakdown = e ? Object.keys(STATUS).filter((k) => e.byStatus[k])
+      .map((k) => `<span class="chip-s" style="--c:${STATUS[k].color}">${STATUS[k].label} ${e.byStatus[k]}</span>`).join('') : '';
+    el.innerHTML = `<button type="button" class="af-back">‹ Всички парцели</button>
+      <div class="af-text">
+        <b>${e ? esc(e.name) : `Търсене: „${esc(state.text)}“`}</b>
+        <span>${e && e.eik ? `ЕИК ${esc(e.eik)} · ` : ''}${nf.format(n)} парцела · ${ha(total)} ха${e && e.freeArea ? ` · ${ha(e.freeArea)} ха незастроени или частично` : ''}</span>
+        ${breakdown ? `<div class="chips">${breakdown}</div>` : ''}
+      </div>`;
+    el.querySelector('.af-back').onclick = clearSearch;
   }
 
   function renderSummary() {
@@ -614,7 +641,7 @@
       const area = rows.reduce((s, r) => s + (r.area || 0), 0);
       const floor = rows.reduce((s, r) => s + (r.max_floor || 0), 0);
       const owners = new Set(rows.map((r) => r.owner)).size;
-      $('#selinfo').innerHTML = `<b>${nf.format(rows.length)} избрани</b> · ${num(area, ' м²')}${floor ? ' · макс. РЗП ' + num(floor, ' м²') : ''} · ${nf.format(owners)} ${owners === 1 ? 'собственик' : 'собственика'}`;
+      $('#selinfo').innerHTML = `<b>${nf.format(rows.length)} избрани от списъка</b> · ${num(area, ' м²')}${floor ? ' · макс. РЗП ' + num(floor, ' м²') : ''} · ${nf.format(owners)} ${owners === 1 ? 'собственик' : 'собственика'}`;
     }
     renderDots();
     refreshListMarks();
@@ -699,12 +726,20 @@
       body = `<dl class="facts"><dt>Собственик</dt><dd>${esc(r.owner)}</dd><dt>Площ</dt><dd>${num(r.area, ' м²')}</dd>
         <dt>Зона по ОУП</dt><dd>${esc(r.zone || '—')}</dd></dl><p class="loading">Зареждане на подробностите…</p>`;
     }
-    const ownersHtml = ents.length ? `<h3>Собственици — всички техни парцели</h3><ul class="owners-list">${ents.map((e) => `
-      <li><button type="button" data-ent="${e.i}"><span>${esc(e.name)}${e.eik ? `<br><small class="muted">ЕИК ${esc(e.eik)}</small>` : ''}</span>
-      <span>${nf.format(e.ids.length)} парц. ›</span></button></li>`).join('')}</ul>` : '';
+    const persons = r.cat === 'person' || r.cat === 'mixed' ? (r.owner.match(/(\d+ физически лица|физическо лице)/) || [])[0] : '';
+    const ownersHtml = `<div class="owner-cards">${ents.map((e) => `
+      <button type="button" class="owner-card" data-ent="${e.i}">
+        <span class="oc-name">${esc(e.name)}</span>
+        <span class="oc-meta">${e.eik ? `ЕИК ${esc(e.eik)} · ` : ''}${nf.format(e.ids.length)} ${e.ids.length === 1 ? 'парцел' : 'парцела'} · ${ha(e.area)} ха</span>
+        <span class="oc-go">${e.ids.length > 1 ? `Виж всичките ${nf.format(e.ids.length)} ›` : 'Виж ›'}</span>
+      </button>`).join('')}
+      ${persons ? `<div class="owner-card plain"><span class="oc-name">${esc(persons)}</span><span class="oc-meta">Имената на физическите лица не се показват</span></div>` : ''}
+      ${!ents.length && !persons ? `<div class="owner-card plain"><span class="oc-name">${esc(r.owner)}</span></div>` : ''}
+    </div>`;
     $('#detail').innerHTML = `<div class="detail">
       <span class="badge" style="--c:${o.color}">${o.short}</span><span class="badge" style="--c:${s.color}">${s.label}</span>
       <h2>${esc(id)}</h2>
+      ${ownersHtml}
       <div class="actions">
         <button type="button" class="btn ${fav ? 'fav-on' : ''}" data-act="fav">${fav ? '★ В любими' : '☆ Любим'}</button>
         <button type="button" class="btn ${sel ? 'sel-on' : ''}" data-act="sel">${sel ? '✓ Избран' : 'Избери'}</button>
@@ -715,7 +750,6 @@
       </div>
       ${fav ? `<textarea class="fav-note" placeholder="Бележка (пази се с любимите)…">${esc(fav.note || '')}</textarea>` : ''}
       ${body}
-      ${ownersHtml}
     </div>`;
     const d = $('#detail');
     d.querySelector('[data-act=fav]').onclick = () => toggleFav(id);
@@ -725,6 +759,41 @@
     const note = d.querySelector('.fav-note');
     if (note) note.oninput = () => { const f = state.favs.get(id); if (f) { f.note = note.value; saveFavs(); } };
     d.querySelectorAll('[data-ent]').forEach((b) => { b.onclick = () => chooseEntity(state.entities[+b.dataset.ent]); });
+  }
+
+  // ---------- Фирми tab ----------
+  function initOwnersTab() {
+    let t;
+    $('#owners-filter').addEventListener('input', () => { clearTimeout(t); t = setTimeout(renderOwners, 150); });
+    $('#owners-sort').addEventListener('change', renderOwners);
+    document.querySelectorAll('#owners-kinds input').forEach((cb) => cb.addEventListener('change', renderOwners));
+    renderOwners();
+  }
+  function renderOwners() {
+    const q = $('#owners-filter').value.trim();
+    const kinds = new Set([...document.querySelectorAll('#owners-kinds input:checked')].map((c) => c.value));
+    const sort = $('#owners-sort').value;
+    let list = q ? findEntities(q, 400) : state.entities;
+    list = list.filter((e) => kinds.has(e.kind === 'Община' || e.kind === 'Държавата' ? e.kind : 'firm'));
+    if (!q) list = [...list].sort((a, b) => (sort === 'count' ? b.ids.length - a.ids.length : b[sort] - a[sort]));
+    $('#owners-count').textContent = `${nf.format(list.length)} собственика`;
+    const ol = $('#owner-results');
+    ol.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    list.slice(0, 200).forEach((e) => {
+      const li = document.createElement('li');
+      li.innerHTML = `<div class="main">
+          <div class="line1"><span class="id">${esc(e.name)}</span><span class="area">${ha(e.area)} ха</span></div>
+          <div class="chips">
+            <span class="chip-s plain">${nf.format(e.ids.length)} ${e.ids.length === 1 ? 'парцел' : 'парцела'}</span>
+            ${e.freeArea ? `<span class="chip-s" style="--c:${STATUS.free.color}">${ha(e.freeArea)} ха незастроени/частично</span>` : ''}
+            ${e.eik ? `<span class="chip-s plain">ЕИК ${esc(e.eik)}</span>` : ''}
+          </div>
+        </div><span class="go">›</span>`;
+      li.addEventListener('click', () => chooseEntity(e));
+      frag.appendChild(li);
+    });
+    ol.appendChild(frag);
   }
 
   // ---------- Search ----------
@@ -751,10 +820,10 @@
   }
   function hideSuggest() { $('#suggest').hidden = true; sug.hl = -1; }
 
-  function findEntities(q) {
+  function findEntities(q, limit = 8) {
     const digits = q.replace(/\D/g, '');
     if (digits.length >= 4 && digits.length === q.replace(/\s/g, '').length) {
-      return state.entities.filter((e) => e.eik && e.eik.startsWith(digits)).slice(0, 8);
+      return state.entities.filter((e) => e.eik && e.eik.startsWith(digits)).slice(0, limit);
     }
     const tokens = norm(q).split(' ').filter(Boolean);
     if (!tokens.length) return [];
@@ -766,7 +835,7 @@
       if (tokens.every((t) => (' ' + e.qn).includes(' ' + t))) score += 2;
       scored.push([score, e]);
     }
-    return scored.sort((a, b) => b[0] - a[0]).slice(0, 8).map((x) => x[1]);
+    return scored.sort((a, b) => b[0] - a[0]).slice(0, limit).map((x) => x[1]);
   }
   function highlight(name, q) {
     const tokens = norm(q).split(' ').filter((t) => t.length > 1);
