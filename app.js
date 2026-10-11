@@ -62,6 +62,23 @@
     },
   };
   const isPhone = () => window.matchMedia('(max-width: 699px)').matches;
+  const isDark = () => window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  // 10135.5501.356 -> city code dimmed, cadastral region, plot number in bold (as on a КККР sheet).
+  function cad(id) {
+    const [e, r, n] = String(id).split('.');
+    if (!n) return `<span class="cad">${esc(id)}</span>`;
+    return `<span class="cad"><span class="e">${e}</span><span class="d">.</span><span class="r">${r}</span><span class="d">.</span><span class="n">${n}</span></span>`;
+  }
+  const ICON = {
+    layers: '<svg viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg>',
+    locate: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>',
+    rect: '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="1.5" stroke-dasharray="3 2.5"/></svg>',
+    mark: '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>',
+    fit: '<svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
+    star: '<svg viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.7l5.9-.9L12 3.5Z"/></svg>',
+    check: '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>',
+  };
   const canHover = window.matchMedia('(hover: hover)').matches;
 
   let toastTimer;
@@ -111,12 +128,18 @@
 
   // ---------- Map ----------
   const map = L.map('map', { preferCanvas: true, zoomControl: !isPhone(), tap: false }).setView([43.215, 27.91], 13);
+  // "Изчистена": OpenStreetMap muted with a CSS filter (grey in light mode, inverted in dark) so the data stands out.
+  const clean = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 20, maxNativeZoom: 19, attribution: '© OpenStreetMap', className: 'tiles-clean',
+  }).addTo(map);
   const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 20, maxNativeZoom: 19, attribution: '© OpenStreetMap',
-  }).addTo(map);
+  });
+  const BASES = { clean, osm, sat: null };
   const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 20, maxNativeZoom: 19, attribution: 'Imagery © Esri',
   });
+  BASES.sat = sat;
 
   // Only the plots pane takes clicks; zones, restrictions and cadastre tiles let them through.
   function makePane(name, z, interactive) {
@@ -234,7 +257,7 @@
         ctx.fill();
         ctx.globalAlpha = 0.95;
         ctx.lineWidth = sel || fav ? 2.5 : 0.8;
-        ctx.strokeStyle = sel ? '#2563eb' : fav ? '#eab308' : '#ffffff';
+        ctx.strokeStyle = sel ? cssVar('--accent') : fav ? cssVar('--fav') : (isDark() ? '#0e1418' : '#ffffff');
         ctx.stroke();
         const key = `${Math.floor(p.x / B)},${Math.floor(p.y / B)}`;
         if (!this._hit.has(key)) this._hit.set(key, []);
@@ -281,11 +304,11 @@
   tools.onAdd = () => {
     const d = L.DomUtil.create('div', 'map-tools leaflet-control');
     d.innerHTML = `
-      <button type="button" id="tool-layers" title="Слоеве на картата">☰</button>
-      <button type="button" id="tool-locate" title="Къде съм">◎</button>
-      <button type="button" id="tool-rect" title="Избери парцели с правоъгълник">▭</button>
-      <button type="button" id="tool-mark" title="Режим маркиране: докосване избира парцели">✓</button>
-      <button type="button" id="tool-fit" title="Покажи всички резултати">⤢</button>`;
+      <button type="button" id="tool-layers" title="Слоеве на картата" aria-label="Слоеве на картата">${ICON.layers}</button>
+      <button type="button" id="tool-locate" title="Къде съм" aria-label="Къде съм">${ICON.locate}</button>
+      <button type="button" id="tool-rect" title="Избери с правоъгълник" aria-label="Избери с правоъгълник">${ICON.rect}</button>
+      <button type="button" id="tool-mark" title="Маркиране с докосване" aria-label="Маркиране с докосване">${ICON.mark}</button>
+      <button type="button" id="tool-fit" title="Покажи всички резултати" aria-label="Покажи всички резултати">${ICON.fit}</button>`;
     L.DomEvent.disableClickPropagation(d);
     return d;
   };
@@ -296,7 +319,7 @@
   L.DomEvent.disableClickPropagation(banner);
   const legend = L.control({ position: 'bottomright' });
   legend.onAdd = () => {
-    const d = L.DomUtil.create('div', 'legend' + (isPhone() ? ' closed' : ''));
+    const d = L.DomUtil.create('div', 'legend closed');
     L.DomEvent.disableClickPropagation(d);
     return d;
   };
@@ -314,9 +337,9 @@
     const s = shown
       ? { color: c, weight: 1.2, opacity: 1, fill: true, fillColor: c, fillOpacity: 0.45, dashArray: null }
       : { color: '#6b7280', weight: 0.9, opacity: 0.75, fill: true, fillColor: '#6b7280', fillOpacity: 0.04, dashArray: null };
-    if (state.favs.has(id)) Object.assign(s, { color: '#eab308', weight: 3, opacity: 1 });
-    if (state.sel.has(id)) Object.assign(s, { color: '#2563eb', weight: 3.5, opacity: 1, fillOpacity: Math.max(s.fillOpacity, 0.3), fillColor: shown ? c : '#2563eb' });
-    if (id === state.current) Object.assign(s, { color: '#111', weight: 4, opacity: 1, fillOpacity: 0.6, fillColor: c });
+    if (state.favs.has(id)) Object.assign(s, { color: cssVar('--fav'), weight: 3, opacity: 1 });
+    if (state.sel.has(id)) Object.assign(s, { color: cssVar('--accent'), weight: 3.5, opacity: 1, fillOpacity: Math.max(s.fillOpacity, 0.3), fillColor: shown ? c : cssVar('--accent') });
+    if (id === state.current) Object.assign(s, { color: cssVar('--reg'), weight: 3.5, opacity: 1, dashArray: '9 6', fillOpacity: 0.55, fillColor: c });
     return s;
   }
   function restyle(ids) {
@@ -329,10 +352,15 @@
   function renderLegend() {
     const el = document.querySelector('.legend');
     const src = colorMode() === 'owner' ? OWNER : STATUS;
-    el.innerHTML = `<button type="button" class="lg-toggle">${colorMode() === 'owner' ? 'Собственик' : 'Състояние'} ${el.classList.contains('closed') ? '▸' : '▾'}</button>
+    const closed = el.classList.contains('closed');
+    el.innerHTML = `<button type="button" class="lg-toggle" aria-expanded="${!closed}">
+        <span>${colorMode() === 'owner' ? 'Собственик' : 'Състояние'}</span>
+        <span class="lg-dots">${Object.values(src).map((s) => `<i style="background:${s.color}"></i>`).join('')}</span>
+        <span>${closed ? '▸' : '▾'}</span></button>
       <div class="lg-body">${Object.values(src).map((s) => `<div><i style="background:${s.color}"></i>${s.short || s.label}</div>`).join('')}
-      <div><i style="border:3px solid #eab308"></i>Любим</div><div><i style="border:3px solid #2563eb"></i>Избран</div>
-      ${map.getZoom() >= POLY_ZOOM ? '<div><i style="border:1px solid #6b7280"></i>Извън филтъра (кликва се)</div>' : ''}</div>`;
+      <div><i style="border:2.5px solid var(--fav)"></i>Любим</div><div><i style="border:2.5px solid var(--accent)"></i>Избран</div>
+      <div><i style="border:2px dashed var(--reg)"></i>Отворен парцел</div>
+      ${map.getZoom() >= POLY_ZOOM ? '<div><i style="border:1px solid #6b7280"></i>Извън филтъра</div>' : ''}</div>`;
     el.querySelector('.lg-toggle').onclick = () => { el.classList.toggle('closed'); renderLegend(); };
   }
 
@@ -482,19 +510,62 @@
     state.rows.forEach((r) => { counts[r[countKey]] = (counts[r[countKey]] || 0) + 1; });
     el.innerHTML = '';
     for (const [k, s] of Object.entries(defs)) {
-      const row = document.createElement('label');
-      row.className = 'check-row';
-      row.style.setProperty('--c', s.color);
-      row.innerHTML = `<input type="checkbox" ${set.has(k) ? 'checked' : ''}>
-        <span class="swatch"></span>
-        <span class="text"><span class="name">${s.label}</span><span class="desc">${s.desc}</span></span>
-        <span class="n">${nf.format(counts[k] || 0)}</span>`;
-      row.querySelector('input').addEventListener('change', (e) => {
-        e.target.checked ? set.add(k) : set.delete(k);
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'fchip';
+      b.style.setProperty('--c', s.color);
+      b.title = s.desc;
+      b.setAttribute('aria-pressed', set.has(k));
+      b.innerHTML = `<i></i>${s.short || s.label}<span class="n">${nf.format(counts[k] || 0)}</span>`;
+      b.addEventListener('click', () => {
+        set.has(k) ? set.delete(k) : set.add(k);
+        b.setAttribute('aria-pressed', set.has(k));
         apply();
       });
-      el.appendChild(row);
+      el.appendChild(b);
     }
+  }
+  const PRESETS = {
+    free: { owners: ['mun_private', 'state', 'company', 'mixed'], statuses: ['free', 'partial'], minArea: '500' },
+    municipal: { owners: ['mun_private'], statuses: ['free', 'partial', 'estate'], minArea: '0' },
+    firms: { owners: ['company', 'mixed'], statuses: ['free', 'partial'], minArea: '500' },
+    all: { owners: Object.keys(OWNER), statuses: Object.keys(STATUS), minArea: '0' },
+  };
+  function setFilters(f) {
+    state.owners = new Set(f.owners);
+    state.statuses = new Set(f.statuses);
+    checklist($('#owner-list'), OWNER, state.owners, 'cat');
+    checklist($('#status-list'), STATUS, state.statuses, 'status');
+    $('#min-area').value = f.minArea;
+    $('#district').value = '';
+    $('#zone-group').value = '';
+    apply();
+  }
+  function markPreset() {
+    const same = (a, b) => a.size === b.length && b.every((x) => a.has(x));
+    document.querySelectorAll('[data-preset]').forEach((b) => {
+      const p = PRESETS[b.dataset.preset];
+      const on = same(state.owners, p.owners) && same(state.statuses, p.statuses) && $('#min-area').value === p.minArea
+        && !$('#district').value && !$('#zone-group').value;
+      b.setAttribute('aria-pressed', on);
+    });
+  }
+  function initSegments() {
+    document.querySelectorAll('.seg[data-for]').forEach((seg) => {
+      const input = document.getElementById(seg.dataset.for);
+      const sync = () => seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.value === input.value));
+      seg.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+        input.value = b.dataset.value;
+        sync();
+        input.dispatchEvent(new Event('change'));
+      }));
+      input.addEventListener('sync', sync);
+      sync();
+    });
+  }
+  function renderExplain() {
+    $('#explain-list').innerHTML = [...Object.values(OWNER), ...Object.values(STATUS)]
+      .map((s) => `<dt><i style="--c:${s.color}"></i>${s.short || s.label}</dt><dd>${s.desc}</dd>`).join('');
   }
 
   function buildControls(districts) {
@@ -508,21 +579,20 @@
     $('#zone-group').value = f.zone ?? '';
     $('#sort').value = f.sort ?? DEFAULTS.sort;
     $('#color-by').value = f.colorBy ?? DEFAULTS.colorBy;
+    initSegments();
+    renderExplain();
+    document.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', () => setFilters(PRESETS[b.dataset.preset])));
     for (const id of ['#min-area', '#district', '#zone-group', '#sort']) $(id).addEventListener('change', apply);
     $('#color-by').addEventListener('change', () => { apply(); renderLegend(); });
     $('#reset-filters').addEventListener('click', () => {
-      state.owners = new Set(DEFAULTS.owners);
-      state.statuses = new Set(DEFAULTS.statuses);
-      checklist($('#owner-list'), OWNER, state.owners, 'cat');
-      checklist($('#status-list'), STATUS, state.statuses, 'status');
-      $('#min-area').value = DEFAULTS.minArea; $('#district').value = ''; $('#zone-group').value = '';
       $('#sort').value = DEFAULTS.sort; $('#color-by').value = DEFAULTS.colorBy;
-      apply(); renderLegend();
+      $('#sort').dispatchEvent(new Event('sync')); $('#color-by').dispatchEvent(new Event('sync'));
+      setFilters({ owners: DEFAULTS.owners, statuses: DEFAULTS.statuses, minArea: DEFAULTS.minArea });
+      renderLegend();
       toast('Филтрите са върнати по подразбиране');
     });
 
     document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
-    $('#detail-back').addEventListener('click', closeDetail);
     $('#fit-results').addEventListener('click', () => { fitRows(state.matched.slice(0, MAX_DOTS)); });
     $('#select-all').addEventListener('click', () => {
       const take = state.matched.slice(0, MAX_SELECT_ALL);
@@ -610,6 +680,8 @@
     renderActiveFilter();
     renderSummary();
     renderList();
+    markPreset();
+    document.body.classList.remove('loading');
     if (document.querySelector('.legend')) renderLegend();
   }
 
@@ -654,13 +726,13 @@
     const st = STATUS[r.status];
     return `<input type="checkbox" class="pick" ${state.sel.has(r.id) ? 'checked' : ''} aria-label="Избери ${r.id}">
       <div class="main">
-        <div class="line1"><span class="id"><i style="--c:${colorOf(r)}"></i>${r.id}</span><span class="area">${num(r.area, ' м²')}</span></div>
-        <div class="owner">${esc(r.owner)}</div>
+        <div class="line1"><span class="id"><i style="--c:${colorOf(r)}"></i>${cad(r.id)}</span><span class="area">${num(r.area, ' м²')}</span></div>
+        <div class="owner ${r.cat === 'person' || r.cat === 'unknown' ? 'person' : ''}">${esc(r.owner)}</div>
         <div class="chips">
           <span class="chip-s" style="--c:${st.color}">${st.label}</span>
           ${r.zone ? `<span class="chip-s plain">${esc(r.zone)}</span>` : ''}
           ${r.district ? `<span class="chip-s plain">${esc(r.district)}</span>` : ''}
-          ${r.max_floor ? `<span class="chip-s plain">РЗП до ${num(r.max_floor, ' м²')}</span>` : ''}
+          ${r.max_floor ? `<span class="chip-s plain mono">РЗП ≤ ${num(r.max_floor, ' м²')}</span>` : ''}
         </div>
         ${withNote && fav?.note ? `<div class="note-line">${esc(fav.note)}</div>` : ''}
       </div>
@@ -813,27 +885,23 @@
       if (p.zone === 'Жм2') notes.push('Показателите за Жм2 не са в Приложение 1 — проверете специфичните правила.');
       if (p.owner_cat === 'mun_public') notes.push('Публична общинска собственост не може да се продава, освен ако общината не я обяви за частна.');
       const facts = [
-        ['Собственик', esc(p.owner)],
         eiks.length && !ents.length ? ['ЕИК', eiks.map(esc).join('<br>')] : null,
         ['Вид собственост', esc(p.prop || '—')],
-        ['Площ', num(p.area, ' м²')],
         ['Район', esc((p.district || '—').replace(/^район /, ''))],
         ['По кадастър', esc(p.use_type || '—')],
         ['Зона по ОУП', p.zone ? `${esc(p.zone)}${p.zone_name ? ' — ' + esc(p.zone_name) : ''}` : '—'],
         p.kint ? ['Макс. плътност / Кинт', `${p.density ?? '—'}% / ${p.kint}`] : null,
         p.cornice ? ['Макс. корниз', p.cornice + ' м'] : null,
-        p.max_floor ? ['Макс. РЗП (горна граница)', num(p.max_floor, ' м²')] : null,
+
         ['Застроеност', `${p.built ?? 0}% (${p.n_buildings || 0} сгр.${p.max_floors ? `, до ${p.max_floors} ет.` : ''})`],
       ].filter(Boolean);
       const flags = FLAGS.filter(([k]) => p[k]);
-      body = `<p class="addr">${esc(p.address || '')}</p>
-        <dl class="facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
+      body = `<dl class="facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
         <div class="flags">${flags.length ? flags.map(([, t, cls]) => `<span class="flag ${cls || ''}">${t}</span>`).join('') : '<span class="flag ok">Без открити ограничения</span>'}</div>
         ${notes.map((n) => `<p class="note">${n}</p>`).join('')}
         ${altApplies ? `<p class="alt">Допълнително: ${esc(alt)}</p>` : ''}`;
     } else {
-      body = `<dl class="facts"><dt>Собственик</dt><dd>${esc(r.owner)}</dd><dt>Площ</dt><dd>${num(r.area, ' м²')}</dd>
-        <dt>Зона по ОУП</dt><dd>${esc(r.zone || '—')}</dd></dl><p class="loading">Зареждане на подробностите…</p>`;
+      body = `<p class="loading-text">Зареждане на подробностите…</p>`;
     }
     const persons = r.cat === 'person' || r.cat === 'mixed' ? (r.owner.match(/(\d+ физически лица|физическо лице)/) || [])[0] : '';
     const ownersHtml = `<div class="owner-cards">${ents.map((e) => `
@@ -845,22 +913,34 @@
       ${persons ? `<div class="owner-card plain"><span class="oc-name">${esc(persons)}</span><span class="oc-meta">Имената на физическите лица не се показват</span></div>` : ''}
       ${!ents.length && !persons ? `<div class="owner-card plain"><span class="oc-name">${esc(r.owner)}</span></div>` : ''}
     </div>`;
+    const pp = p || {};
     $('#detail').innerHTML = `<div class="detail">
-      <span class="badge" style="--c:${o.color}">${o.short}</span><span class="badge" style="--c:${s.color}">${s.label}</span>
-      <h2>${esc(id)}</h2>
-      ${ownersHtml}
-      <div class="actions">
-        <button type="button" class="btn ${fav ? 'fav-on' : ''}" data-act="fav">${fav ? '★ В любими' : '☆ Любим'}</button>
-        <button type="button" class="btn ${sel ? 'sel-on' : ''}" data-act="sel">${sel ? '✓ Избран' : 'Избери'}</button>
-        <a class="btn" href="https://www.google.com/maps?q=${r.lat},${r.lon}" target="_blank" rel="noopener">Google Maps</a>
-        <a class="btn" href="https://kais.cadastre.bg/bg/Map" target="_blank" rel="noopener">КАИС</a>
-        <button type="button" class="btn" data-act="copy">Копирай ID</button>
-        <button type="button" class="btn" data-act="link">Линк</button>
+      <div class="detail-top">
+        <button type="button" class="back" data-act="back">‹ Назад</button>
+        <div class="icon-actions">
+          <button type="button" class="icon-btn ${fav ? 'fav-on' : ''}" data-act="fav" title="${fav ? 'Махни от любими' : 'Добави в любими'}" aria-label="Любим" aria-pressed="${!!fav}">${ICON.star}</button>
+          <button type="button" class="icon-btn ${sel ? 'sel-on' : ''}" data-act="sel" title="${sel ? 'Махни от избраните' : 'Избери'}" aria-label="Избери" aria-pressed="${sel}">${ICON.check}</button>
+        </div>
       </div>
-      ${fav ? `<textarea class="fav-note" placeholder="Бележка (пази се с любимите)…">${esc(fav.note || '')}</textarea>` : ''}
+      <h2 class="did">${cad(id)}</h2>
+      ${pp.address ? `<p class="addr">${esc(pp.address)}</p>` : ''}
+      <div class="badges"><span class="badge" style="--c:${o.color}">${o.short}</span><span class="badge" style="--c:${s.color}">${s.label}</span>${r.zone ? `<span class="badge" style="--c:var(--faint)">${esc(r.zone)}</span>` : ''}</div>
+      <div class="bignum">
+        <div><b>${num(r.area)} м²</b><span>Площ</span></div>
+        ${r.max_floor ? `<div><b>${num(r.max_floor)} м²</b><span>Макс. РЗП по ОУП</span></div>` : ''}
+      </div>
+      ${ownersHtml}
+      ${fav ? `<textarea class="fav-note" placeholder="Бележка (пази се с любимите)">${esc(fav.note || '')}</textarea>` : ''}
       ${body}
+      <div class="links">
+        <a href="https://www.google.com/maps?q=${r.lat},${r.lon}" target="_blank" rel="noopener">Google Maps</a>
+        <a href="https://kais.cadastre.bg/bg/Map" target="_blank" rel="noopener">КАИС</a>
+        <button type="button" data-act="copy">Копирай идентификатора</button>
+        <button type="button" data-act="link">Копирай линк</button>
+      </div>
     </div>`;
     const d = $('#detail');
+    d.querySelector('[data-act=back]').onclick = closeDetail;
     d.querySelector('[data-act=fav]').onclick = () => toggleFav(id);
     d.querySelector('[data-act=sel]').onclick = () => toggleSel(id);
     d.querySelector('[data-act=copy]').onclick = () => copy(id, 'ID е копиран');
@@ -892,7 +972,7 @@
     list.slice(0, 200).forEach((e) => {
       const li = document.createElement('li');
       li.innerHTML = `<div class="main">
-          <div class="line1"><span class="id">${esc(e.name)}</span><span class="area">${ha(e.area)} ха</span></div>
+          <div class="line1"><span class="oname">${esc(e.name)}</span><span class="area">${ha(e.area)} ха</span></div>
           <div class="chips">
             <span class="chip-s plain">${nf.format(e.ids.length)} ${e.ids.length === 1 ? 'парцел' : 'парцела'}</span>
             ${e.freeArea ? `<span class="chip-s" style="--c:${STATUS.free.color}">${ha(e.freeArea)} ха незастроени/частично</span>` : ''}
@@ -980,7 +1060,7 @@
       html += '<h4>Парцели</h4>';
       plotHits.forEach((r) => {
         sug.items.push({ kind: 'plot', go: () => { hideSuggest(); openDetail(r.id, true); } });
-        html += `<button type="button" role="option"><span class="s-name">${esc(r.id)}</span><span class="s-n">${num(r.area, ' м²')}</span>
+        html += `<button type="button" role="option"><span class="s-name">${cad(r.id)}</span><span class="s-n">${num(r.area, ' м²')}</span>
           <span class="s-meta">${esc(r.owner)}</span></button>`;
       });
     }
@@ -1049,9 +1129,8 @@
   function initLayersPanel() {
     document.querySelectorAll('[data-base]').forEach((b) => {
       b.onclick = () => {
-        const satOn = b.dataset.base === 'sat';
-        (satOn ? osm : sat).remove();
-        (satOn ? sat : osm).addTo(map);
+        Object.values(BASES).forEach((t) => t.remove());
+        BASES[b.dataset.base].addTo(map);
         document.querySelectorAll('[data-base]').forEach((x) => x.setAttribute('aria-pressed', x === b));
       };
     });
