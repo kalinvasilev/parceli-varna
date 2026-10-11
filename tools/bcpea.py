@@ -16,13 +16,15 @@ import sys
 import time
 import urllib.request
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 BASE = 'https://sales.bcpea.org'
 COURT = 3  # Окръжен съд Варна
 UA = 'parceli-varna/1.0 (+https://kalinvasilev.github.io/parceli-varna/)'
 PAUSE = 1.5  # seconds between requests
 CAD_RE = re.compile(r'(?<![\d.])(\d{5})\.(\d{1,5})\.(\d{1,4})((?:\.\d{1,3}){0,2})(?![\d])')
-TODAY = date.today().isoformat()
+SOFIA = ZoneInfo('Europe/Sofia')  # GitHub runners use UTC
+TODAY = datetime.now(SOFIA).date().isoformat()
 
 
 def get(url):
@@ -165,7 +167,7 @@ def main(path):
     for pid, rec in listings.items():
         if pid not in current and not rec.get('removed'):
             rec['removed'] = TODAY
-    store['updated'] = datetime.now().strftime('%Y-%m-%d %H:%M')
+    store['updated'] = datetime.now(SOFIA).strftime('%Y-%m-%d %H:%M')
     store['source'] = f'{BASE}/properties?court={COURT}'
     os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
     tmp = path + '.tmp'
