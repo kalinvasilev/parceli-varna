@@ -133,6 +133,8 @@
     markMode: false,
     tab: 'filters',
     events: [], signalsByPlot: new Map(), mode: null, feedUpdated: '',
+    changePeriods: [], changeEvents: [], changesByPlot: new Map(), changePeriod: '',
+    changeTypes: new Set(['to_entity', 'to_person', 'swap', 'coowner', 'category', 'new', 'removed']),
     auctionKinds: new Set(['plots', 'land']),
     pupTypes: new Set(['pup_request', 'pup_approved']),
   };
@@ -529,6 +531,7 @@
       openFromHash();
       syncZoomLayers();
       renderFavs();
+      load('meta.json').catch(() => null).then(initChanges);
       Promise.allSettled([load('auctions.json'), load('pup.json')]).then(([a, p]) => initFeed(
         a.status === 'fulfilled' ? a.value : null, p.status === 'fulfilled' ? p.value : null));
       load('oup.geojson').then((d) => zones.addData(d));
@@ -720,6 +723,7 @@
       filters: 'Филтри',
       auctions: 'Търгове',
       pup: 'ПУП',
+      changes: 'Промени',
       favs: `Любими${n(state.favs.size)}`,
       detail: state.current ? cad(state.current) : 'Парцел',
     };
@@ -729,7 +733,7 @@
     const wasFavs = state.tab === 'favs';
     state.tab = tab;
     if (tab !== 'detail') {
-      const want = tab === 'auctions' || tab === 'pup' ? tab : null;
+      const want = tab === 'auctions' || tab === 'pup' || tab === 'changes' ? tab : null;
       if (want !== state.mode) {
         state.mode = want;
         if (state.rows.length) apply();
@@ -1062,6 +1066,7 @@
         ${r.max_floor ? `<div><b>${num(r.max_floor)} м²</b><span>Макс. РЗП по ОУП</span></div>` : ''}
       </div>
       ${signalsHtml(id)}
+      ${changesHtml(id)}
       ${ownersHtml}
       ${fav ? `<textarea class="fav-note" placeholder="Бележка (пази се с любимите)">${esc(fav.note || '')}</textarea>` : ''}
       ${body}
@@ -1163,6 +1168,11 @@
       return state.events.filter((e) => e.kind === 'auction' && state.auctionKinds.has(e.akind)
 ).sort(by);
     }
+    if (mode === 'changes') {
+      const order = Object.keys(CHANGE_TYPES);
+      return state.changeEvents.filter((e) => e.period === state.changePeriod && state.changeTypes.has(e.t))
+        .sort((x, y) => order.indexOf(x.t) - order.indexOf(y.t) || (changeArea(y) - changeArea(x)));
+    }
     const days = +$('#pup-period').value;
     const since = days ? new Date(Date.now() - days * 864e5).toISOString().slice(0, 10) : '';
     const linkedOnly = $('#pup-linked').checked;
@@ -1171,6 +1181,7 @@
   }
   const FEED_LIMIT = 300;
   function eventRow(e) {
+    if (e.kind === 'change') return changeRow(e);
     const plot = e.plot_ids.length ? state.byId.get(e.plot_ids[0]) : null;
     const k = EVENT[e.kind];
     let title = '', price = '', where = '', chips = [];
@@ -1209,10 +1220,13 @@
     const list = visibleEvents(mode);
     const linked = list.filter((e) => e.plot_ids.length).length;
     const upd = state.feedUpdated ? ` · обновено ${longDate(state.feedUpdated.slice(0, 10))}` : '';
-    const noun = mode === 'auctions' ? 'продажби' : 'ПУП';
-    $(mode === 'auctions' ? '#auctions-summary' : '#pup-summary').innerHTML =
-      `<b>${nf.format(list.length)}</b> ${noun} · <b>${nf.format(linked)}</b> на картата${upd}`;
-    const ol = $(mode === 'auctions' ? '#auction-results' : '#pup-results');
+    const feed = {
+      auctions: ['#auctions-summary', '#auction-results', 'продажби', upd],
+      pup: ['#pup-summary', '#pup-results', 'ПУП', upd],
+      changes: ['#changes-summary', '#changes-results', 'промени', ''],
+    }[mode];
+    $(feed[0]).innerHTML = `<b>${nf.format(list.length)}</b> ${feed[2]} · <b>${nf.format(linked)}</b> на картата${feed[3]}`;
+    const ol = $(feed[1]);
     ol.innerHTML = '';
     const frag = document.createDocumentFragment();
     list.slice(0, FEED_LIMIT).forEach((e) => {
@@ -1265,6 +1279,138 @@
         ? `<a class="signal" href="${esc(r.url)}" target="_blank" rel="noopener">${inner}<span class="sg-go">Заповед и чертеж ↗</span></a>`
         : `<div class="signal">${inner}</div>`;
     }).join('')}</div>`;
+  }
+
+  // ---------- Промени: what changed in ownership between two loads of КАИС data ----------
+  const CHANGE_TYPES = {
+    to_entity: { label: 'ФЛ → фирма', color: '#ea580c' },
+    to_person: { label: 'Фирма → ФЛ', color: '#7c3aed' },
+    swap: { label: 'Смяна на фирма', color: '#0f6e8c' },
+    coowner: { label: 'Съсобственик', color: '#ca8a04' },
+    category: { label: 'Вид собственост', color: '#b45309' },
+    new: { label: 'Нов парцел', color: '#16a34a' },
+    removed: { label: 'Изчезнал парцел', color: '#dc2626' },
+    persons: { label: 'Брой ФЛ', color: '#64748b' },
+    area: { label: 'Площ', color: '#64748b' },
+  };
+  const CHANGE_LABELS = Object.fromEntries(Object.entries(CHANGE_TYPES).map(([k, v]) => [k, v.label]));
+  const dotDate = longDate;
+  const personsText = (n) => (!n ? '' : n === 1 ? 'физическо лице' : `${nf.format(n)} физически лица`);
+  const changeArea = (e) => (e.item.ar ? Math.max(e.item.ar[0] || 0, e.item.ar[1] || 0) : state.byId.get(e.plot_ids[0])?.area || 0);
+
+  // One line saying what changed, as safe HTML (company names are escaped, persons are counts).
+  function changeText(e) {
+    const it = e.item;
+    const nm = (keys) => (keys || []).map((k) => `<b>${esc((e.names[k] || ['?'])[0])}</b>`).join(', ');
+    const side = (keys, persons) => [nm(keys), personsText(persons)].filter(Boolean).join(' + ') || 'без известен собственик';
+    const [p0, p1] = it.p || [0, 0];
+    const arrow = '<span class="chg-arrow">→</span>';
+    switch (e.t) {
+      case 'to_entity': return `${side([], p0)} ${arrow} ${side(it.a, p1)}`;
+      case 'to_person': return `${side(it.r, p0)} ${arrow} ${side([], p1)}`;
+      case 'swap': return `${side(it.r, 0)} ${arrow} ${side(it.a, 0)}`;
+      case 'coowner': return [it.a && `+ ${nm(it.a)}`, it.r && `− ${nm(it.r)}`].filter(Boolean).join(' · ');
+      case 'persons': return `Физически лица: ${nf.format(p0)} ${arrow} ${nf.format(p1)}`;
+      case 'category': return `${esc(OWNER[it.c[0]].label)} ${arrow} ${esc(OWNER[it.c[1]].label)}`;
+      case 'new': return `Нов в КАИС · ${side(it.a, p1)}`;
+      case 'removed': return `Вече го няма в КАИС (обединен или разделен) · ${side(it.r, p0)}`;
+      case 'area': return `Площ ${num(it.ar[0])} ${arrow} ${num(it.ar[1], ' м²')}`;
+      default: return '';
+    }
+  }
+  function changeRow(e) {
+    const plot = e.plot_ids.length ? state.byId.get(e.plot_ids[0]) : null;
+    const t = CHANGE_TYPES[e.t];
+    const it = e.item;
+    const area = it.ar && e.t !== 'area' ? (it.ar[1] ?? it.ar[0]) : plot?.area;
+    const chips = [
+      `<span class="chip-s plain mono">${cad(e.all_ids[0])}</span>`,
+      area ? `<span class="chip-s plain mono">${num(area, ' м²')}</span>` : '',
+      it.ar && !['area', 'new', 'removed'].includes(e.t) ? `<span class="chip-s plain">площ ${num(it.ar[0])} → ${num(it.ar[1], ' м²')}</span>` : '',
+      it.c && !['category', 'to_entity', 'to_person'].includes(e.t) ? `<span class="chip-s plain">${esc(OWNER[it.c[0]].short)} → ${esc(OWNER[it.c[1]].short)}</span>` : '',
+      plot ? '' : '<span class="chip-s plain">не е на картата</span>',
+    ].join('');
+    return `<div class="main">
+        <div class="line1"><span class="ev-kind" style="--c:${t.color}">${t.label}</span><span class="ev-date">${dotDate(e.date)}</span></div>
+        <div class="chg">${changeText(e)}</div>
+        <div class="chips">${chips}</div>
+      </div><span class="go">${plot ? '›' : ''}</span>`;
+  }
+  // The plot's own history, at the top of its details.
+  function changesHtml(id) {
+    const list = state.changesByPlot.get(id) || [];
+    if (!list.length) return '';
+    return `<div class="signals"><h3>Промени в собствеността</h3>${list.map((e) => {
+      const t = CHANGE_TYPES[e.t];
+      return `<div class="signal"><span class="sg-kind" style="--c:${t.color}">${t.label} · ${dotDate(e.date)}</span>
+        <span class="sg-text">${changeText(e)}</span><span class="sg-sub">спрямо ${dotDate(e.from)}</span></div>`;
+    }).join('')}</div>`;
+  }
+  function renderChangePeriods() {
+    const sel = $('#changes-period');
+    sel.hidden = !state.changePeriods.length;
+    sel.innerHTML = state.changePeriods.map((p) =>
+      `<option value="${p.id}">${dotDate(p.from)} → ${dotDate(p.to)} · ${nf.format(p.n)}</option>`).join('');
+    sel.value = state.changePeriod;
+  }
+  function renderChangeTypes() {
+    const counts = {};
+    state.changeEvents.forEach((e) => { if (e.period === state.changePeriod) counts[e.t] = (counts[e.t] || 0) + 1; });
+    toggleChips($('#changes-types'), CHANGE_LABELS, state.changeTypes, counts, () => renderEvents('changes'));
+  }
+  function initChanges(meta) {
+    if (meta && meta.kais) {
+      $('#stamp').textContent = `КАИС · ${dotDate(meta.kais)}`;
+      $('#kais-date').textContent = dotDate(meta.kais);
+    }
+    const asOf = meta && meta.kais ? dotDate(meta.kais) : '';
+    $('#changes-period').addEventListener('change', (ev) => {
+      state.changePeriod = ev.target.value;
+      renderChangeTypes();
+      renderEvents('changes');
+    });
+    $('#changes-fit').addEventListener('click', () => fitRows(state.matched.slice(0, MAX_DOTS)));
+    $('#changes-export').addEventListener('click', () => exportCsv(state.matched, 'promeni'));
+    const empty = () => {
+      $('#changes-summary').textContent = `Данните са от ${asOf || 'последното зареждане'}. Първите промени ще се покажат, когато заредите следващия месец от КАИС.`;
+      $('#changes-results').innerHTML = '';
+      $('#changes-period').hidden = true;
+      document.querySelector('#view-changes .toolbar').hidden = true;
+    };
+    return load('changes/index.json').then(async (ix) => {
+      const periods = [...ix.periods].sort((a, b) => b.id.localeCompare(a.id));
+      if (!periods.length) return empty();
+      const files = await Promise.allSettled(periods.map((p) => load(`changes/${p.id}.json`)));
+      state.changePeriods = periods.filter((p, i) => files[i].status === 'fulfilled');
+      if (!state.changePeriods.length) return empty();
+      state.changePeriod = state.changePeriods[0].id;
+      const events = [];
+      files.forEach((f) => {
+        if (f.status !== 'fulfilled') return;
+        const d = f.value;
+        d.items.forEach((item) => {
+          const id = (d.prefix || '10135.') + item.id;
+          events.push({ kind: 'change', t: item.t, item, names: d.names, period: d.to, date: d.to, from: d.from,
+            all_ids: [id], plot_ids: state.byId.has(id) ? [id] : [] });
+        });
+      });
+      state.changeEvents = events;
+      state.changesByPlot = new Map();
+      events.forEach((e) => e.plot_ids.forEach((id) => {
+        if (!state.changesByPlot.has(id)) state.changesByPlot.set(id, []);
+        state.changesByPlot.get(id).push(e);
+      }));
+      state.changesByPlot.forEach((l) => l.sort((a, b) => b.date.localeCompare(a.date)));
+      const latest = state.changePeriods[0];
+      const n = events.filter((e) => e.period === latest.id && state.changeTypes.has(e.t)).length;
+      $('#n-changes').textContent = n ? nf.format(n) : '';
+      $('#n-changes').title = n ? `от ${dotDate(latest.from)} до ${dotDate(latest.to)}` : '';
+      $('#changes-note').textContent = 'Източник: сравнение на две зареждания на отворените данни на КАИС. Смяна от едно физическо лице на друго не се вижда, защото имената им не се пазят.';
+      renderChangePeriods();
+      renderChangeTypes();
+      renderEvents('changes');
+      if (state.current) renderDetail();
+    }).catch(empty);
   }
 
   // ---------- Owners of the listed plots (Парцели › Собственици) ----------

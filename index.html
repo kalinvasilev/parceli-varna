@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Unbounded:wght@500;700&display=swap">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="style.css?v=39">
+  <link rel="stylesheet" href="style.css?v=42">
 </head>
 <body class="loading">
   <div id="topbar">
@@ -26,6 +26,7 @@
       <button type="button" role="tab" data-tab="list">Парцели <span class="count" id="n-list"></span></button>
       <button type="button" role="tab" data-tab="auctions">Търгове <span class="count" id="n-auctions"></span></button>
       <button type="button" role="tab" data-tab="pup">ПУП <span class="count" id="n-pup"></span></button>
+      <button type="button" role="tab" data-tab="changes">Промени <span class="count" id="n-changes"></span></button>
       <button type="button" role="tab" data-tab="favs">Любими <span class="count" id="n-favs"></span></button>
     </nav>
     <div class="search-wrap">
@@ -118,7 +119,7 @@
         <button type="button" class="btn-text" id="reset-filters">Върни по подразбиране</button>
         <div class="apply-bar"><button type="button" class="btn-primary" id="filters-apply">Покажи парцелите</button></div>
         <footer>
-          Данни: КАИС отворени данни (18.09.2026), varnamap.bg, ОУП Варна — Приложение №1.
+          Данни: КАИС отворени данни (<span id="kais-date">18.09.2026</span>), varnamap.bg, ОУП Варна — Приложение №1.
           Фирми и институции са показани по име; физическите лица — само като брой.
           Макс. РЗП = площ × Кинт по ОУП; реалните показатели са в ПУП.
         </footer>
@@ -203,6 +204,23 @@
         <p class="source-note">Източник: <a href="https://agup.varna.bg/" target="_blank" rel="noopener">регистрите на АГУП Варна</a>. Обновява се всяка сутрин.</p>
       </section>
 
+      <section class="view" id="view-changes" role="tabpanel">
+        <div class="list-head">
+          <p class="feed-intro">Какво се е променило в собствеността между две зареждания на данните от КАИС. Физическите лица се виждат само като брой.</p>
+          <div class="field">
+            <select id="changes-period" aria-label="Период"></select>
+          </div>
+          <div class="chips-wrap" id="changes-types"></div>
+          <p class="summary" id="changes-summary">Зареждане…</p>
+          <div class="toolbar">
+            <button type="button" class="btn-text" id="changes-fit">На картата</button>
+            <button type="button" class="btn-text" id="changes-export">Експорт</button>
+          </div>
+        </div>
+        <ol class="results" id="changes-results"></ol>
+        <p class="source-note" id="changes-note"></p>
+      </section>
+
       <section class="view" id="view-favs" role="tabpanel">
         <div class="list-head">
           <p class="summary" id="favs-intro">Добавете парцели с ☆. Любимите се пазят в този браузър.</p>
@@ -259,6 +277,6 @@
   <div id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script src="app.js?v=39"></script>
+  <script src="app.js?v=41"></script>
 </body>
 </html>

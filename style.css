@@ -562,9 +562,10 @@ a.signal:hover { border-color: var(--accent); }
   }
   #topbar .brand { display: none; }
   #topbar .search-wrap { order: 1; flex: 1 1 100%; max-width: none; margin: 0; }
-  #topbar .tabs { order: 2; width: 100%; overflow-x: auto; scrollbar-width: none; }
+  #topbar .tabs { order: 2; width: 100%; overflow-x: auto; scrollbar-width: none; gap: 0; justify-content: space-between; }
   #topbar .tabs::-webkit-scrollbar { display: none; }
-  #topbar .tabs button { padding: 6px 12px; font-size: 13.5px; }
+  #topbar .tabs button { padding: 6px 5px; font-size: 12.5px; white-space: nowrap; }
+  #topbar .tabs .count { font-size: 10.5px; }
   #map { position: fixed; inset: 0; }
   .leaflet-top { top: var(--top-h); }
   .mode-banner { top: calc(var(--top-h) + 10px); }
@@ -577,3 +578,9 @@ a.signal:hover { border-color: var(--accent); }
   .map-tools svg { width: 18px; height: 18px; }
 }
 .feed-intro { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
+
+/* Промени: one line saying what changed */
+.chg { font-size: 13.5px; line-height: 1.45; color: var(--ink); overflow-wrap: anywhere; }
+.chg b { font-weight: 600; }
+.chg-arrow { color: var(--faint); padding: 0 2px; }
+#changes-period { width: 100%; }
