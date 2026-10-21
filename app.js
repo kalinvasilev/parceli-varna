@@ -1176,27 +1176,45 @@
         .sort((x, y) => order.indexOf(x.t) - order.indexOf(y.t) || (changeArea(y) - changeArea(x)));
     }
     // A search looks through every year; the period only limits the plain list.
-    const tokens = norm($('#pup-q').value, true).split(' ').filter(Boolean);
+    // Two readings of the query: letters folded to one alphabet (roman numerals) and Latin typed for Cyrillic.
+    const forms = [foldNorm($('#pup-q').value), norm($('#pup-q').value, true)].map((phrase) => ({ phrase, tokens: phrase.split(' ').filter(Boolean) }));
+    const tokens = forms[0].tokens;
     const days = tokens.length ? 0 : +$('#pup-period').value;
     const since = days ? new Date(Date.now() - days * 864e5).toISOString().slice(0, 10) : '';
     const linkedOnly = $('#pup-linked').checked;
     const base = state.events.filter((e) => state.pupTypes.has(e.kind)
       && (!since || (e.date || '') >= since) && (!linkedOnly || e.plot_ids.length));
     if (!tokens.length) return base;
-    // Typing an order number ("Г-1", "430") finds that order; otherwise every word must be found.
+    // Best first: an order number typed exactly ("Г-1", "430"), then the words together as typed
+    // ("кв. 75", "Варна Ландшафт"), and only then every word anywhere.
     const typed = $('#pup-q').value.trim().toLowerCase();
-    const byOrder = base.filter((e) => e.kind !== 'auction' && String(e.r.order).toLowerCase() === typed);
-    return byOrder.length ? byOrder : base.filter((e) => tokens.every((t) => pupHaystack(e).includes(t)));
+    const byOrder = base.filter((e) => String(e.r.order).toLowerCase() === typed);
+    if (byOrder.length) return byOrder;
+    for (const all of [false, true]) {
+      for (const i of [0, 1]) {
+        const hit = base.filter((e) => pupHas(e, forms[i], i, all));
+        if (hit.length) return hit;
+      }
+    }
+    return [];
   }
   // Everything a ПУП can be found by: its text, order number, cadastral ids and the owner of the plot it is on.
+  // The registers mix Latin and Cyrillic look-alikes in roman numerals (УПИ ІV-91 / IV-91), so text is also
+  // compared with those letters folded to one alphabet.
+  const LOOKALIKE = { а: 'a', в: 'b', с: 'c', е: 'e', н: 'h', к: 'k', м: 'm', о: 'o', р: 'p', т: 't', х: 'x', і: 'i', у: 'y' };
+  const foldNorm = (s) => String(s || '').toLowerCase().replace(/[а-яіё]/g, (c) => LOOKALIKE[c] || c)
+    .replace(/[^0-9a-zа-яё]+/g, ' ').trim();
   function pupHaystack(e) {
     if (e._q === undefined) {
       const r = e.r;
       const owner = e.plot_ids.map((id) => state.byId.get(id)?.owner).filter((o) => typeof o === 'string');
-      e._q = norm([r.plan, r.district, r.target, r.place, r.kv, r.order, r.title, ...(e.all_ids || []), ...owner].join(' '), true);
+      const text = [r.plan, r.district, r.target, r.place, r.kv, r.order, r.title, ...(e.all_ids || []), ...owner].join(' ');
+      e._q = [' ' + foldNorm(text), ' ' + norm(text, true)];
     }
     return e._q;
   }
+  // Words are matched from their start ("ландшафт" finds "ЛАНДШАФТ", "75" does not find "1750").
+  const pupHas = (e, f, i, all) => (all ? f.tokens.every((t) => pupHaystack(e)[i].includes(' ' + t)) : pupHaystack(e)[i].includes(' ' + f.phrase));
   const FEED_LIMIT = 300;
   function eventRow(e) {
     if (e.kind === 'change') return changeRow(e);
