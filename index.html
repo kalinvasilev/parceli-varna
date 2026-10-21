@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Unbounded:wght@500;700&display=swap">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="style.css?v=42">
+  <link rel="stylesheet" href="style.css?v=43">
 </head>
 <body class="loading">
   <div id="topbar">
@@ -188,6 +188,7 @@
       <section class="view" id="view-pup" role="tabpanel">
         <div class="list-head">
           <p class="feed-intro">Поискани и одобрени подробни устройствени планове (ПУП) в гр. Варна. Поисканият ПУП е първият знак, че някой се готви да строи.</p>
+          <input id="pup-q" type="search" placeholder="Фирма, ПИ, заповед, улица…" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Търсене в ПУП">
           <div class="chips-wrap" id="pup-types"></div>
           <div class="field">
             <label class="lchip"><input type="checkbox" id="pup-linked"><span>Само на картата</span></label>
@@ -277,6 +278,6 @@
   <div id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script src="app.js?v=41"></script>
+  <script src="app.js?v=45"></script>
 </body>
 </html>

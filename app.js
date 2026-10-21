@@ -1145,6 +1145,8 @@
     toggleChips($('#auction-kinds'), AUCTION_KINDS, state.auctionKinds, akCounts, () => renderEvents('auctions'));
     toggleChips($('#pup-types'), PUP_TYPES, state.pupTypes, pupCounts, () => renderEvents('pup'));
     $('#auction-sort').addEventListener('change', () => renderEvents('auctions'));
+    let pupTimer;
+    $('#pup-q').addEventListener('input', () => { clearTimeout(pupTimer); pupTimer = setTimeout(() => renderEvents('pup'), 150); });
     $('#pup-linked').addEventListener('change', () => renderEvents('pup'));
     $('#pup-period').addEventListener('change', () => renderEvents('pup'));
     const nAuctions = events.filter((e) => e.kind === 'auction').length;
@@ -1173,11 +1175,27 @@
       return state.changeEvents.filter((e) => e.period === state.changePeriod && state.changeTypes.has(e.t))
         .sort((x, y) => order.indexOf(x.t) - order.indexOf(y.t) || (changeArea(y) - changeArea(x)));
     }
-    const days = +$('#pup-period').value;
+    // A search looks through every year; the period only limits the plain list.
+    const tokens = norm($('#pup-q').value, true).split(' ').filter(Boolean);
+    const days = tokens.length ? 0 : +$('#pup-period').value;
     const since = days ? new Date(Date.now() - days * 864e5).toISOString().slice(0, 10) : '';
     const linkedOnly = $('#pup-linked').checked;
-    return state.events.filter((e) => state.pupTypes.has(e.kind)
+    const base = state.events.filter((e) => state.pupTypes.has(e.kind)
       && (!since || (e.date || '') >= since) && (!linkedOnly || e.plot_ids.length));
+    if (!tokens.length) return base;
+    // Typing an order number ("Г-1", "430") finds that order; otherwise every word must be found.
+    const typed = $('#pup-q').value.trim().toLowerCase();
+    const byOrder = base.filter((e) => e.kind !== 'auction' && String(e.r.order).toLowerCase() === typed);
+    return byOrder.length ? byOrder : base.filter((e) => tokens.every((t) => pupHaystack(e).includes(t)));
+  }
+  // Everything a ПУП can be found by: its text, order number, cadastral ids and the owner of the plot it is on.
+  function pupHaystack(e) {
+    if (e._q === undefined) {
+      const r = e.r;
+      const owner = e.plot_ids.map((id) => state.byId.get(id)?.owner).filter((o) => typeof o === 'string');
+      e._q = norm([r.plan, r.district, r.target, r.place, r.kv, r.order, r.title, ...(e.all_ids || []), ...owner].join(' '), true);
+    }
+    return e._q;
   }
   const FEED_LIMIT = 300;
   function eventRow(e) {
@@ -1222,7 +1240,7 @@
     const upd = state.feedUpdated ? ` · обновено ${longDate(state.feedUpdated.slice(0, 10))}` : '';
     const feed = {
       auctions: ['#auctions-summary', '#auction-results', 'продажби', upd],
-      pup: ['#pup-summary', '#pup-results', 'ПУП', upd],
+      pup: ['#pup-summary', '#pup-results', 'ПУП', $('#pup-q').value.trim() ? ' · търсено във всички години' : upd],
       changes: ['#changes-summary', '#changes-results', 'промени', ''],
     }[mode];
     $(feed[0]).innerHTML = `<b>${nf.format(list.length)}</b> ${feed[2]} · <b>${nf.format(linked)}</b> на картата${feed[3]}`;
